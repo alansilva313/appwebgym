@@ -12,6 +12,8 @@ import {
     Image,
     Share as RNShare,
     ActivityIndicator,
+    AppState,
+    TextInput,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
@@ -23,6 +25,7 @@ import { theme } from '../theme/theme';
 import api from '../api/api';
 import { useWorkoutStore } from '../store/useWorkoutStore';
 import { fixUrl } from '../utils/url';
+import { NotificationService } from '../services/NotificationService';
 import {
     Play,
     ChevronLeft,
@@ -37,6 +40,7 @@ import {
     BarChart2,
     Zap,
     Trophy,
+    Flame,
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
@@ -49,6 +53,7 @@ interface SetLog {
     timeBetweenSets: number;  // seconds since last set (or session start)
     restTimeTaken: number;    // actual rest taken in seconds
     restTimeOffered: number;  // offered rest (60s)
+    load: string;             // load used for this set
 }
 
 interface ExerciseLog {
@@ -63,10 +68,13 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
     const { workout } = route.params;
     const insets = useSafeAreaInsets();
     const user = useAuthStore((state) => state.user);
+    const showAlert = useAlertStore(s => s.showAlert);
+    const deleteWorkout = useWorkoutStore(s => s.deleteWorkout);
+    const updateWorkout = useWorkoutStore(s => s.updateWorkout);
 
     const [exercises, setExercises] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const deleteWorkout = useWorkoutStore(s => s.deleteWorkout);
+    const [sessionId, setSessionId] = useState<number | null>(null);
 
     // ── Session state ──────────────────────────────────────────────────────
     const [sessionActive, setSessionActive] = useState(false);
@@ -83,11 +91,16 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
     const [exerciseLogs, setExerciseLogs] = useState<ExerciseLog[]>([]);
     const lastSetTimestampRef = useRef<number>(0);  // ms — when last set was completed
     const restStartRef = useRef<number>(0);          // ms — when rest started
+    const [sessionLoad, setSessionLoad] = useState('0');
+    const [suggestions, setSuggestions] = useState<Record<number, any>>({});
     const sessionSavedRef = useRef(false);
 
     const timerRef = useRef<any>(null);
     const restRef = useRef<any>(null);
     const shareRef = useRef<any>(null);
+
+    const [gainedXP, setGainedXP] = useState(0);
+    const [caloriesBurned, setCaloriesBurned] = useState(0);
 
     // Safe area
     const topInset = insets.top > 0
@@ -95,15 +108,156 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
         : (Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 0);
     const bottomInset = insets.bottom > 0 ? insets.bottom : 16;
 
+    const formatTime = (secs: number) => {
+        const m = Math.floor(secs / 60).toString().padStart(2, '0');
+        const s = (secs % 60).toString().padStart(2, '0');
+        return `${m}:${s}`;
+    };
+
+    const saveSession = async (finalElapsed: number, logs: ExerciseLog[]) => {
+        if (sessionSavedRef.current) return;
+        sessionSavedRef.current = true;
+
+        const allSets = logs.flatMap(l => l.sets);
+        const totalSetsCompleted = allSets.length;
+        const avgRestTimeTaken = allSets.length > 0
+            ? Math.round(allSets.reduce((a, s) => a + s.restTimeTaken, 0) / allSets.length)
+            : 0;
+        const timeBetweenSetsArr = allSets.map(s => s.timeBetweenSets).filter(t => t > 0);
+        const avgTimeBetweenSets = timeBetweenSetsArr.length > 0
+            ? Math.round(timeBetweenSetsArr.reduce((a, b) => a + b, 0) / timeBetweenSetsArr.length)
+            : 0;
+
+        try {
+            const endpoint = sessionId ? `/workout-sessions/${sessionId}` : '/workout-sessions';
+            const method = sessionId ? 'patch' : 'post';
+
+            const userWeight = user?.weight || 75;
+            const durationHours = finalElapsed / 3600;
+            const estimatedCals = Math.round(6.0 * userWeight * durationHours);
+            setCaloriesBurned(estimatedCals);
+
+            const response = await api[method](endpoint, {
+                workoutId: workout.id,
+                workoutName: workout.name,
+                totalTimeSeconds: finalElapsed,
+                totalSetsCompleted,
+                totalExercises: exercises.length,
+                avgRestTimeTaken,
+                avgTimeBetweenSets,
+                exerciseLogs: logs,
+                totalVolumeKg: 0,
+                caloriesBurned: estimatedCals,
+                status: 'completed'
+            });
+
+            if (response.data.gainedXP) {
+                setGainedXP(response.data.gainedXP);
+                const setUser = useAuthStore.getState().setUser;
+                if (user) {
+                    setUser({
+                        ...user,
+                        xp: response.data.totalXP,
+                        level: response.data.currentLevel
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to save session:', e);
+        }
+    };
+
     useEffect(() => {
         fetchWorkoutDetails();
+
+        // Handle Session Resumption
+        if (route.params?.resumeSessionId) {
+            resumeActiveSession(route.params.resumeSessionId);
+        }
+
         const unsubscribe = navigation.addListener('focus', () => fetchWorkoutDetails());
+
+        // Escuta o estado do app para enviar notificação de lembrete
+        const appStateSubscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState === 'active') {
+                NotificationService.cancelWorkoutReminder();
+            }
+        });
+
         return () => {
             clearInterval(timerRef.current);
             clearInterval(restRef.current);
             unsubscribe();
+            appStateSubscription.remove();
         };
     }, []);
+
+    // Monitora o estado da sessão e o background para agendar lembrete
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', state => {
+            if (state !== 'active' && sessionActive && !sessionDone) {
+                // Se saiu do app com treino ativo, avisa em 15 segundos
+                NotificationService.scheduleWorkoutReminder(workout.name, 15);
+            }
+        });
+        return () => sub.remove();
+    }, [sessionActive, sessionDone, workout.name]);
+
+    const resumeActiveSession = async (sid: number) => {
+        try {
+            const res = await api.get(`/workout-sessions/${sid}`);
+            const sessionData = res.data;
+
+            // Garantir que temos os exercícios carregados antes de calcular o progresso
+            let currentExercises = exercises;
+            if (currentExercises.length === 0) {
+                const workoutRes = await api.get(`/workouts/${workout.id}`);
+                currentExercises = workoutRes.data.workoutExercises || workoutRes.data.exercises || [];
+                setExercises(currentExercises);
+            }
+
+            setSessionId(sid);
+            setExerciseLogs(sessionData.exerciseLogs || []);
+            setElapsed(sessionData.totalTimeSeconds || 0);
+
+            // Map logs back to completedSets record
+            const completed: Record<number, number> = {};
+            (sessionData.exerciseLogs || []).forEach((log: any, idx: number) => {
+                completed[idx] = log.sets?.length || 0;
+            });
+            setCompletedSets(completed);
+
+            // Set current exercise to first one not fully completed
+            let firstIncomplete = 0;
+            for (let i = 0; i < currentExercises.length; i++) {
+                const totalSetsNeeded = currentExercises[i].sets || 3;
+                if ((completed[i] || 0) < totalSetsNeeded) {
+                    firstIncomplete = i;
+                    break;
+                }
+            }
+
+            setCurrentExerciseIdx(firstIncomplete);
+            setSessionActive(true);
+        } catch (error) {
+            console.error('Error resuming session:', error);
+        }
+    };
+
+    const syncSessionProgress = async (logs: ExerciseLog[]) => {
+        if (!sessionId || sessionSavedRef.current) return;
+        try {
+            await api.patch(`/workout-sessions/${sessionId}`, {
+                totalTimeSeconds: elapsed,
+                totalSetsCompleted: logs.flatMap(l => l.sets).length,
+                totalExercises: exercises.length,
+                exerciseLogs: logs,
+                status: 'active'
+            });
+        } catch (e) {
+            console.warn('Failed to sync progress:', e);
+        }
+    };
 
     // Trigger saveSession when sessionDone turns true
     useEffect(() => {
@@ -141,7 +295,9 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
     const fetchWorkoutDetails = async () => {
         try {
             const res = await api.get(`/workouts/${workout.id}`);
-            setExercises(res.data.workoutExercises || res.data.exercises || []);
+            const workoutData = res.data;
+            setExercises(workoutData.workoutExercises || workoutData.exercises || []);
+            fetchSuggestions();
         } catch {
             setExercises(workout.exercises || []);
         } finally {
@@ -149,7 +305,48 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
         }
     };
 
-    const showAlert = useAlertStore(s => s.showAlert);
+    const fetchSuggestions = async () => {
+        try {
+            const res = await api.get(`/workout-sessions/overload/${workout.id}`);
+            setSuggestions(res.data);
+        } catch (error) {
+            console.error('Error fetching suggestions:', error);
+        }
+    };
+
+    const handleRemoveExercise = (exId: number) => {
+        if (workout.trainerId) return;
+
+        showAlert(
+            t('workouts.remove_exercise_title', 'Remover Exercício'),
+            t('workouts.remove_exercise_confirm', 'Tem certeza que deseja remover este exercício do treino?'),
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                    text: t('common.remove', 'Remover'),
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            const updatedEx = exercises.filter(ex => (ex.exercise?.id || ex.exerciseId) !== exId);
+                            await updateWorkout(workout.id, {
+                                name: workout.name,
+                                daysOfWeek: workout.daysOfWeek,
+                                exercises: updatedEx.map(ex => ({
+                                    exerciseId: ex.exercise?.id || ex.exerciseId,
+                                    sets: ex.sets || 3,
+                                    reps: ex.reps || 10,
+                                    load: ex.load || '0'
+                                }))
+                            });
+                            setExercises(updatedEx);
+                        } catch {
+                            showAlert(t('common.error'), t('workouts.remove_error', 'Erro ao remover exercício'));
+                        }
+                    }
+                }
+            ]
+        );
+    };
 
     const handleDeleteWorkout = () => {
         showAlert(
@@ -173,26 +370,49 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
         );
     };
 
-    const startSession = () => {
+    const startSession = async () => {
         const now = Date.now();
         // Initialize exercise logs for tracking
-        setExerciseLogs(exercises.map(ex => ({
+        const logs = exercises.map(ex => ({
             exerciseId: ex.exercise?.id || ex.exerciseId,
             exerciseName: ex.exercise?.name || ex.name || '',
             muscleGroup: ex.exercise?.muscle_group || ex.muscle_group || '',
             sets: [],
-        })));
+        }));
+
+        setExerciseLogs(logs);
+
+        try {
+            const res = await api.post('/workout-sessions', {
+                workoutId: workout.id,
+                workoutName: workout.name,
+                totalExercises: exercises.length,
+                exerciseLogs: logs,
+                status: 'active'
+            });
+            setSessionId(res.data.session.id);
+        } catch (error) {
+            console.error('Failed to start session on server:', error);
+        }
+
         sessionSavedRef.current = false;
         lastSetTimestampRef.current = now;
         restStartRef.current = 0;
         setSessionActive(true);
         setCurrentExerciseIdx(0);
+        const initialLoad = exercises[0]?.load || '0';
+        setSessionLoad(initialLoad);
         setCompletedSets({});
         setElapsed(0);
         setSessionDone(false);
     };
 
     const completeSet = (exerciseIdx: number, totalSets: number) => {
+        const loadVal = parseFloat(sessionLoad.replace(',', '.'));
+        if (!sessionLoad || isNaN(loadVal) || loadVal < 0) {
+            showAlert(t('common.error'), "A carga não pode ser negativa. Para peso corporal ou apenas a barra, use 0kg.");
+            return;
+        }
         const now = Date.now();
         const currentEx = exercises[exerciseIdx];
         const exerciseId = currentEx?.exercise?.id || currentEx?.exerciseId;
@@ -208,7 +428,7 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
             : 0;
 
         // --- Record this set in exerciseLogs ---
-        setExerciseLogs(prev => prev.map((log, i) => {
+        const updatedLogs = exerciseLogs.map((log, i) => {
             if (log.exerciseId === exerciseId || i === exerciseIdx) {
                 return {
                     ...log,
@@ -218,14 +438,22 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                         timeBetweenSets,
                         restTimeTaken,
                         restTimeOffered: 60,
+                        load: sessionLoad,
                     }],
                 };
             }
             return log;
-        }));
+        });
+
+        setExerciseLogs(updatedLogs);
+
+        // Sync progress with server immediately
+        syncSessionProgress(updatedLogs);
 
         lastSetTimestampRef.current = now;
         setCompletedSets(prev => ({ ...prev, [exerciseIdx]: newCount }));
+
+        // syncSessionProgress(updatedLogs) already called above
 
         // Start rest timer
         restStartRef.current = now;
@@ -234,7 +462,12 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
 
         // Advance to next exercise or finish
         if (newCount >= totalSets && exerciseIdx < exercises.length - 1) {
-            setTimeout(() => setCurrentExerciseIdx(exerciseIdx + 1), 500);
+            setTimeout(() => {
+                const nextIdx = exerciseIdx + 1;
+                setCurrentExerciseIdx(nextIdx);
+                const nextLoad = exercises[nextIdx]?.load || '0';
+                setSessionLoad(nextLoad);
+            }, 500);
         } else if (newCount >= totalSets && exerciseIdx === exercises.length - 1) {
             setTimeout(() => {
                 setSessionDone(true);
@@ -262,41 +495,9 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
         setRestActive(false);
     };
 
-    const saveSession = async (finalElapsed: number, logs: ExerciseLog[]) => {
-        if (sessionSavedRef.current) return;
-        sessionSavedRef.current = true;
+    // formatTime and saveSession moved up
 
-        const allSets = logs.flatMap(l => l.sets);
-        const totalSetsCompleted = allSets.length;
-        const avgRestTimeTaken = allSets.length > 0
-            ? Math.round(allSets.reduce((a, s) => a + s.restTimeTaken, 0) / allSets.length)
-            : 0;
-        const timeBetweenSetsArr = allSets.map(s => s.timeBetweenSets).filter(t => t > 0);
-        const avgTimeBetweenSets = timeBetweenSetsArr.length > 0
-            ? Math.round(timeBetweenSetsArr.reduce((a, b) => a + b, 0) / timeBetweenSetsArr.length)
-            : 0;
-
-        try {
-            await api.post('/workout-sessions', {
-                workoutId: workout.id,
-                workoutName: workout.name,
-                totalTimeSeconds: finalElapsed,
-                totalSetsCompleted,
-                totalExercises: exercises.length,
-                avgRestTimeTaken,
-                avgTimeBetweenSets,
-                exerciseLogs: logs,
-            });
-        } catch (e) {
-            console.warn('Failed to save session:', e);
-        }
-    };
-
-    const formatTime = (secs: number) => {
-        const m = Math.floor(secs / 60).toString().padStart(2, '0');
-        const s = (secs % 60).toString().padStart(2, '0');
-        return `${m}:${s}`;
-    };
+    // formatTime moved up
 
     const handleShare = async () => {
         setIsSharing(true);
@@ -362,9 +563,19 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                                 <Text style={styles.summaryLabel}>{t('workouts.avg_rest', 'Descanso médio')}</Text>
                             </View>
                             <View style={styles.summaryCard}>
-                                <ChevronRight size={20} color={theme.colors.primary} />
-                                <Text style={styles.summaryValue}>{avgBetween}s</Text>
-                                <Text style={styles.summaryLabel}>{t('workouts.avg_between', 'Entre séries')}</Text>
+                                <Flame size={20} color={theme.colors.error} />
+                                <Text style={styles.summaryValue}>{caloriesBurned}</Text>
+                                <Text style={styles.summaryLabel}>Kcal Queimadas</Text>
+                            </View>
+                            <View style={styles.summaryCard}>
+                                <Zap size={20} color={theme.colors.primary} />
+                                <Text style={styles.summaryValue}>+{gainedXP}</Text>
+                                <Text style={styles.summaryLabel}>XP Ganhos</Text>
+                            </View>
+                            <View style={styles.summaryCard}>
+                                <CheckCircle2 size={20} color={theme.colors.primary} />
+                                <Text style={styles.summaryValue}>Lvl {user?.level}</Text>
+                                <Text style={styles.summaryLabel}>Nível Atual</Text>
                             </View>
                         </View>
 
@@ -380,6 +591,7 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                                         <View style={styles.setRowStats}>
                                             <Text style={styles.setRowStat}>⏱ {s.timeBetweenSets}s</Text>
                                             <Text style={styles.setRowStat}>💤 {s.restTimeTaken}s</Text>
+                                            <Text style={styles.setRowStat}>⚖️ {s.load || '0'}kg</Text>
                                         </View>
                                     </View>
                                 ))}
@@ -434,6 +646,7 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                                             duration={formatTime(elapsed)}
                                             totalSets={completedSetsArr.length}
                                             userName={user?.name || 'Guerreiro(a)'}
+                                            calories={caloriesBurned}
                                         />
                                     </View>
                                 </View>
@@ -549,9 +762,34 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                             ))}
                         </View>
 
-                        <Text style={styles.setsInfo}>
-                            {currentEx?.reps || 10} {t('workouts.reps', 'repetições')} × Série {doneSets + 1}/{totalSets}
-                        </Text>
+                        {suggestions[currentEx?.exercise?.id || currentEx?.exerciseId] && (
+                            <Animated.View entering={FadeIn.delay(200)} style={[styles.suggestionBadge, styles.coachBadge, { marginBottom: 15 }]}>
+                                <Zap size={12} color="#e67e22" />
+                                <Text style={[styles.suggestionText, styles.coachText]}>
+                                    DICA DO COACH: {suggestions[currentEx?.exercise?.id || currentEx?.exerciseId].suggestion}
+                                </Text>
+                            </Animated.View>
+                        )}
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginVertical: 10 }}>
+                            <Text style={styles.setsInfo}>
+                                {currentEx?.reps || 10} {t('workouts.reps', 'reps')}  ×
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 10, borderWidth: 1, borderColor: theme.colors.border }}>
+                                <Text style={{ color: theme.colors.primary, fontSize: 18, fontWeight: 'black' }}>⚖️</Text>
+                                <TextInput
+                                    style={{ color: theme.colors.white, fontSize: 18, fontWeight: 'bold', padding: 8, minWidth: 50, textAlign: 'center' }}
+                                    value={sessionLoad}
+                                    onChangeText={setSessionLoad}
+                                    keyboardType="numeric"
+                                    selectTextOnFocus
+                                />
+                                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, fontWeight: 'bold' }}>KG</Text>
+                            </View>
+                            <Text style={styles.setsInfo}>
+                                × Série {doneSets + 1}/{totalSets}
+                            </Text>
+                        </View>
 
                         <TouchableOpacity
                             style={[styles.completeSetBtn, doneSets >= totalSets && styles.completeSetBtnDisabled]}
@@ -571,7 +809,7 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                         <View key={i} style={styles.nextExItem}>
                             <Text style={styles.nextExLabel}>{t('workouts.next', 'Próximo')}</Text>
                             <Text style={styles.nextExName}>{ex?.exercise?.name || ex?.name}</Text>
-                            <Text style={styles.nextExSets}>{ex.sets}×{ex.reps}</Text>
+                            <Text style={styles.nextExSets}>{ex.sets}×{ex.reps} — {ex.load || '0'}kg</Text>
                         </View>
                     ))}
                 </ScrollView>
@@ -641,11 +879,27 @@ const WorkoutDetailScreen = ({ route, navigation }: any) => {
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.exName}>{ex?.exercise?.name || ex?.name}</Text>
                                     <Text style={styles.exMuscle}>{ex?.exercise?.muscle_group || ex?.muscle_group}</Text>
+                                    {suggestions[ex?.exercise?.id || ex?.exerciseId] && (
+                                        <View style={styles.suggestionBadge}>
+                                            <Zap size={10} color={theme.colors.primary} />
+                                            <Text style={styles.suggestionText}>
+                                                {suggestions[ex?.exercise?.id || ex?.exerciseId].suggestion}
+                                            </Text>
+                                        </View>
+                                    )}
                                 </View>
                                 <View style={styles.exBadgeRow}>
                                     <View style={styles.exBadge}>
-                                        <Text style={styles.exBadgeText}>{ex.sets}×{ex.reps}</Text>
+                                        <Text style={styles.exBadgeText}>{ex.sets}×{ex.reps} — {ex.load || '0'}kg</Text>
                                     </View>
+                                    {!workout.trainerId && (
+                                        <TouchableOpacity
+                                            onPress={() => handleRemoveExercise(ex.exercise?.id || ex.exerciseId)}
+                                            style={{ marginTop: 8, padding: 4 }}
+                                        >
+                                            <Trash2 size={16} color={theme.colors.error} />
+                                        </TouchableOpacity>
+                                    )}
                                 </View>
                             </Animated.View>
                         ))
@@ -851,6 +1105,31 @@ const styles = StyleSheet.create({
     shareCancelBtnText: { color: theme.colors.textSecondary, fontWeight: 'bold' },
     shareConfirmBtn: { flex: 2, height: 50, borderRadius: 12, backgroundColor: theme.colors.primary, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
     shareConfirmBtnText: { color: theme.colors.background, fontWeight: 'bold' },
+    suggestionBadge: {
+        backgroundColor: theme.colors.primary + '20',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+        marginTop: 6,
+        alignSelf: 'flex-start',
+        borderWidth: 1,
+        borderColor: theme.colors.primary + '40'
+    },
+    suggestionText: {
+        color: theme.colors.primary,
+        fontSize: 10,
+        fontWeight: 'bold'
+    },
+    coachBadge: {
+        backgroundColor: '#e67e22' + '20',
+        borderColor: '#e67e22' + '40',
+    },
+    coachText: {
+        color: '#e67e22'
+    }
 });
 
 export default WorkoutDetailScreen;

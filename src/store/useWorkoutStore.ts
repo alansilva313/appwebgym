@@ -5,6 +5,7 @@ interface Workout {
     id: number;
     name: string;
     daysOfWeek: string;
+    trainerId?: number;
     exercises?: any[];
 }
 

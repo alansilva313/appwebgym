@@ -10,7 +10,7 @@
         "close": "Fechar"
     },
     "welcome": "Bem-vindo de volta!",
-    "app_name": "GYM PRO",
+    "app_name": "GymBro",
     "app_subtitle": "Seu personal trainer no seu bolso",
     "onboarding": {
         "title": "Sua jornada começa aqui",
@@ -56,7 +56,20 @@
             "overweight": "Sobrepeso",
             "obese": "Obeso"
         },
-        "ideal_weight_obs": "Seu peso ideal de acordo com sua altura deve ser:"
+        "ideal_weight_obs": "Seu peso ideal de acordo com sua altura deve ser:",
+        "level": "Nível Atual",
+        "weight_progress_title": "Progresso de Peso",
+        "weight_update_btn": "Pesar",
+        "weight_update_modal_title": "Atualizar Peso",
+        "weight_update_modal_desc": "Registre sua pesagem de hoje para acompanhar sua evolução.",
+        "weight_update_modal_save": "Salvar Peso",
+        "weight_reached_goal": "Meta alcançada! 🏆",
+        "weight_remaining_msg": "{{amount}}kg restantes para o objetivo",
+        "hydration_update_modal_title": "Beber Água",
+        "hydration_update_modal_desc": "Quanto você bebeu agora?",
+        "hydration_update_modal_save": "Registar",
+        "heatmap_title": "Foco Muscular (7 dias)",
+        "heatmap_subtitle": "Intensidade por grupo muscular"
     },
     "login": {
         "email": "E-mail",
@@ -175,8 +188,11 @@
         "share_social": "Compartilhar Stories",
         "share_preview": "Prévia do Stories",
         "share_now": "Compartilhar Agora",
-        "share_title": "Meu treino no GYM PRO",
-        "share_error": "Não foi possível gerar a imagem para compartilhar."
+        "share_title": "Meu treino no GymBro",
+        "share_error": "Não foi possível gerar a imagem para compartilhar.",
+        "remove_exercise_title": "Remover Exercício",
+        "remove_exercise_confirm": "Tem certeza que deseja remover este exercício do treino?",
+        "remove_error": "Erro ao remover exercício"
     },
     "settings": {
         "title": "Configurações",

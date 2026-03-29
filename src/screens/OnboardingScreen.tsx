@@ -1,28 +1,32 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, StatusBar, Dimensions, FlatList } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../store/useAuthStore';
 import { theme } from '../theme/theme';
-import { Target, TrendingDown, RefreshCcw, Coffee, ChevronRight, ArrowLeft } from 'lucide-react-native';
+import { Target, TrendingDown, RefreshCcw, Coffee, ChevronRight, ArrowLeft, Timer } from 'lucide-react-native';
 import api from '../api/api';
 import { Image } from 'expo-image';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout } from 'react-native-reanimated';
+import TimePickerModal from '../components/TimePickerModal';
 
-const { width, height: screenHeight } = Dimensions.get('window');
+
 
 const OnboardingScreen = () => {
     const { t } = useTranslation();
     const setUser = useAuthStore((state) => state.setUser);
     const user = useAuthStore((state) => state.user);
     const [currentIndex, setCurrentIndex] = useState(0);
-    const flatListRef = useRef<FlatList>(null);
 
     const [selectedGoal, setSelectedGoal] = useState<string | null>(null);
     const [birthDate, setBirthDate] = useState<string>('');
     const [weight, setWeight] = useState<string>('');
+    const [targetWeight, setTargetWeight] = useState<string>('');
     const [height, setHeight] = useState<string>('');
     const [selectedSex, setSelectedSex] = useState<string | null>(null);
+    const [workoutTime, setWorkoutTime] = useState<string>('08:00');
+    const [showTimePicker, setShowTimePicker] = useState(false);
+
 
     const insets = useSafeAreaInsets();
     const topInset = insets.top || 24;
@@ -60,8 +64,32 @@ const OnboardingScreen = () => {
             title: t('onboarding.step2_title'),
             subtitle: t('onboarding.step2_subtitle'),
             type: 'goals'
+        },
+        {
+            id: 'workout_time',
+            title: t('onboarding.workout_time_title', 'Horário de Treino'),
+            subtitle: t('onboarding.workout_time_subtitle', 'Em qual horário você costuma treinar? Te avisaremos um pouco antes.'),
+            type: 'time'
+        },
+        {
+            id: 'weight_goal',
+            title: t('onboarding.weight_goal_title', 'Meta de Peso'),
+            subtitle: t('onboarding.weight_goal_subtitle', 'Qual o seu peso desejado? Vamos te ajudar a chegar lá.'),
+            type: 'weight_goal'
         }
     ];
+
+    // Filter slides based on context
+    const getActiveSlides = () => {
+        return slides.filter(s => {
+            if (s.id === 'weight_goal') {
+                return ['weight_loss', 'hypertrophy', 'slimming'].includes(selectedGoal || '');
+            }
+            return true;
+        });
+    };
+
+    const activeSlides = getActiveSlides();
 
     const formatWeight = (text: string) => {
         let value = text.replace(',', '.').replace(/[^0-9.]/g, '');
@@ -84,6 +112,12 @@ const OnboardingScreen = () => {
         if (raw.length <= 2) return raw;
         if (raw.length <= 4) return `${raw.slice(0, 2)}/${raw.slice(2)}`;
         return `${raw.slice(0, 2)}/${raw.slice(2, 4)}/${raw.slice(4, 8)}`;
+    };
+
+    const formatTime = (text: string) => {
+        const raw = text.replace(/[^0-9]/g, '');
+        if (raw.length <= 2) return raw;
+        return `${raw.slice(0, 2)}:${raw.slice(2, 4)}`;
     };
 
     const calculateAge = (dateStr: string) => {
@@ -113,8 +147,7 @@ const OnboardingScreen = () => {
     ];
 
     const handleNext = async () => {
-        if (currentIndex < slides.length - 1) {
-            flatListRef.current?.scrollToIndex({ index: currentIndex + 1 });
+        if (currentIndex < activeSlides.length - 1) {
             setCurrentIndex(currentIndex + 1);
         } else {
             handleFinish();
@@ -123,7 +156,6 @@ const OnboardingScreen = () => {
 
     const handleBack = () => {
         if (currentIndex > 0) {
-            flatListRef.current?.scrollToIndex({ index: currentIndex - 1 });
             setCurrentIndex(currentIndex - 1);
         }
     };
@@ -144,9 +176,11 @@ const OnboardingScreen = () => {
                     goal: selectedGoal,
                     age: calculatedAge,
                     birthDate: isoBirthDate,
-                    weight: weight ? parseFloat(weight) : undefined,
-                    height: height ? parseFloat(height) : undefined,
-                    gender: selectedSex
+                    weight: weight ? parseFloat(weight.replace(',', '.')) : undefined,
+                    height: height ? parseFloat(height.replace(',', '.')) : undefined,
+                    targetWeight: targetWeight ? parseFloat(targetWeight.replace(',', '.')) : undefined,
+                    gender: selectedSex,
+                    workoutTime: workoutTime
                 });
                 setUser(response.data);
             } catch (error) {
@@ -156,9 +190,12 @@ const OnboardingScreen = () => {
     };
 
     const isButtonDisabled = () => {
-        if (currentIndex === 2) return birthDate.length !== 10 || !weight || !height;
-        if (currentIndex === 3) return !selectedSex;
-        if (currentIndex === 4) return !selectedGoal;
+        const currentSlide = activeSlides[currentIndex];
+        if (currentSlide?.id === 'personal_data') return birthDate.length !== 10 || !weight || !height;
+        if (currentSlide?.id === 'sex') return !selectedSex;
+        if (currentSlide?.id === 'goal') return !selectedGoal;
+        if (currentSlide?.id === 'workout_time') return workoutTime.length !== 5;
+        if (currentSlide?.id === 'weight_goal') return !targetWeight;
         return false;
     };
 
@@ -293,6 +330,84 @@ const OnboardingScreen = () => {
             );
         }
 
+        if (item.type === 'time') {
+            return (
+                <View style={[styles.slide, styles.formSlide]}>
+                    <View style={styles.formHeader}>
+                        <Text style={styles.formTitle}>{item.title}</Text>
+                        <Text style={styles.formSubtitle}>{item.subtitle}</Text>
+                    </View>
+                    <View style={styles.inputSection}>
+                        <Animated.View entering={FadeInDown.delay(200)} style={styles.inputWrapper}>
+                            <Text style={styles.inputLabel}>Horário (ex: 18:30)</Text>
+                            <TouchableOpacity
+                                style={[styles.inputContainer, styles.timeInputContainer]}
+                                onPress={() => setShowTimePicker(true)}
+                                activeOpacity={0.7}
+                            >
+                                <Timer size={24} color={theme.colors.primary} />
+                                <Text style={[styles.input, styles.timeInputText]}>
+                                    {workoutTime}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TimePickerModal
+                                visible={showTimePicker}
+                                onClose={() => setShowTimePicker(false)}
+                                onSelect={(time) => setWorkoutTime(time)}
+                                initialTime={workoutTime}
+                            />
+                        </Animated.View>
+
+                        <Animated.View entering={FadeInDown.delay(400)} style={styles.timeHelp}>
+                            <Timer size={40} color={theme.colors.primary} opacity={0.5} />
+                            <Text style={styles.timeHelpText}>
+                                Enviaremos uma notificação motivadora alguns minutos antes desse horário para você se preparar.
+                            </Text>
+                        </Animated.View>
+                    </View>
+                </View>
+            );
+        }
+
+        if (item.type === 'weight_goal') {
+            return (
+                <View style={[styles.slide, styles.formSlide]}>
+                    <View style={styles.formHeader}>
+                        <Text style={styles.formTitle}>{item.title}</Text>
+                        <Text style={styles.formSubtitle}>{item.subtitle}</Text>
+                    </View>
+                    <View style={styles.inputSection}>
+                        <Animated.View entering={FadeInDown.delay(200)} style={styles.inputWrapper}>
+                            <Text style={styles.inputLabel}>Peso Desejado (kg)</Text>
+                            <View style={[styles.inputContainer, { height: 80 }]}>
+                                <TextInput
+                                    placeholder="00.0"
+                                    placeholderTextColor={theme.colors.textSecondary}
+                                    value={targetWeight}
+                                    onChangeText={(text) => setTargetWeight(formatWeight(text))}
+                                    keyboardType="numeric"
+                                    style={[styles.input, { fontSize: 32, fontWeight: 'bold', color: theme.colors.primary }]}
+                                />
+                            </View>
+                        </Animated.View>
+
+                        <View style={styles.weightCompare}>
+                            <View style={styles.weightBox}>
+                                <Text style={styles.weightBoxLabel}>Atual</Text>
+                                <Text style={styles.weightBoxValue}>{weight || '0'} kg</Text>
+                            </View>
+                            <ChevronRight size={24} color={theme.colors.border} />
+                            <View style={styles.weightBox}>
+                                <Text style={styles.weightBoxLabel}>Objetivo</Text>
+                                <Text style={styles.weightBoxValue}>{targetWeight || '--'} kg</Text>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            );
+        }
+
         return null;
     };
 
@@ -300,20 +415,14 @@ const OnboardingScreen = () => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-            <FlatList
-                ref={flatListRef}
-                data={slides}
-                renderItem={renderSlide}
-                horizontal
-                pagingEnabled
-                scrollEnabled={false} // Force navigation via buttons for control
-                showsHorizontalScrollIndicator={false}
-                keyExtractor={(item) => item.id}
-            />
+            {/* Render only the active slide — FlatList scrollToIndex is unreliable on web */}
+            <View style={styles.slideContainer}>
+                {renderSlide({ item: activeSlides[currentIndex] })}
+            </View>
 
             <View style={[styles.footer, { paddingBottom: bottomInset + 20 }]}>
                 <View style={styles.pagination}>
-                    {slides.map((_, index) => (
+                    {activeSlides.map((_, index) => (
                         <View
                             key={index}
                             style={[
@@ -341,7 +450,7 @@ const OnboardingScreen = () => {
                         disabled={isButtonDisabled()}
                     >
                         <Text style={styles.nextButtonText}>
-                            {currentIndex === slides.length - 1 ? t('onboarding.finish') : (currentIndex === 0 ? t('onboarding.get_started') : t('onboarding.next'))}
+                            {currentIndex === activeSlides.length - 1 ? t('onboarding.finish') : (currentIndex === 0 ? t('onboarding.get_started') : t('onboarding.next'))}
                         </Text>
                         <ChevronRight color={theme.colors.white} size={20} />
                     </TouchableOpacity>
@@ -356,9 +465,11 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: theme.colors.background,
     },
+    slideContainer: {
+        flex: 1,
+    },
     slide: {
-        width: width,
-        height: screenHeight,
+        flex: 1,
     },
     slideImage: {
         width: '100%',
@@ -434,6 +545,22 @@ const styles = StyleSheet.create({
     input: {
         color: theme.colors.white,
         fontSize: 16,
+    },
+    timeInputContainer: {
+        height: 80,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        backgroundColor: theme.colors.surface,
+        borderRadius: 20,
+        borderWidth: 2,
+        borderColor: theme.colors.primary + '30',
+    },
+    timeInputText: {
+        fontSize: 32,
+        color: theme.colors.primary,
+        fontWeight: 'bold',
+        marginLeft: 12,
     },
     goalList: {
         gap: 16,
@@ -531,6 +658,47 @@ const styles = StyleSheet.create({
     nextButtonText: {
         color: theme.colors.white,
         fontSize: 16,
+        fontWeight: 'bold',
+    },
+    timeHelp: {
+        marginTop: 40,
+        backgroundColor: theme.colors.surface,
+        padding: 24,
+        borderRadius: 24,
+        alignItems: 'center',
+        gap: 16,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+    },
+    timeHelpText: {
+        color: theme.colors.textSecondary,
+        fontSize: 14,
+        textAlign: 'center',
+        lineHeight: 20,
+    },
+    weightCompare: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 40,
+        padding: 20,
+        backgroundColor: theme.colors.surface,
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+    },
+    weightBox: {
+        alignItems: 'center',
+        flex: 1,
+    },
+    weightBoxLabel: {
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        marginBottom: 4,
+    },
+    weightBoxValue: {
+        color: theme.colors.white,
+        fontSize: 18,
         fontWeight: 'bold',
     },
 });

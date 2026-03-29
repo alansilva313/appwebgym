@@ -24,6 +24,7 @@ interface MeasurementState {
     fetchMeasurements: () => Promise<void>;
     fetchLatest: () => Promise<void>;
     saveMeasurement: (data: Omit<MeasurementData, 'id'>) => Promise<void>;
+    deleteMeasurement: (id: number) => Promise<void>;
 }
 
 export const useMeasurementStore = create<MeasurementState>((set) => ({
@@ -33,8 +34,11 @@ export const useMeasurementStore = create<MeasurementState>((set) => ({
     fetchMeasurements: async () => {
         set({ loading: true });
         try {
-            const response = await api.get('/measurements');
-            set({ measurements: response.data });
+            const [mRes, lRes] = await Promise.all([
+                api.get('/measurements'),
+                api.get('/measurements/latest')
+            ]);
+            set({ measurements: mRes.data, latest: lRes.data });
         } catch (error) {
             console.error('Error fetching measurements:', error);
         } finally {
@@ -49,7 +53,7 @@ export const useMeasurementStore = create<MeasurementState>((set) => ({
             console.error('Error fetching latest measurement:', error);
         }
     },
-    saveMeasurement: async (data) => {
+    saveMeasurement: async (data: Omit<MeasurementData, 'id'>) => {
         set({ loading: true });
         try {
             await api.post('/measurements', data);
@@ -61,6 +65,22 @@ export const useMeasurementStore = create<MeasurementState>((set) => ({
             set({ measurements: mRes.data, latest: lRes.data });
         } catch (error) {
             console.error('Error saving measurement:', error);
+            throw error;
+        } finally {
+            set({ loading: false });
+        }
+    },
+    deleteMeasurement: async (id: number) => {
+        set({ loading: true });
+        try {
+            await api.delete(`/measurements/${id}`);
+            const [mRes, lRes] = await Promise.all([
+                api.get('/measurements'),
+                api.get('/measurements/latest')
+            ]);
+            set({ measurements: mRes.data, latest: lRes.data });
+        } catch (error) {
+            console.error('Error deleting measurement:', error);
             throw error;
         } finally {
             set({ loading: false });

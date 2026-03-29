@@ -8,9 +8,10 @@ interface WorkoutShareCardProps {
     duration: string;
     totalSets: number;
     userName: string;
+    calories?: number;
 }
 
-const WorkoutShareCard = ({ workoutName, duration, totalSets, userName }: WorkoutShareCardProps) => {
+const WorkoutShareCard = ({ workoutName, duration, totalSets, userName, calories }: WorkoutShareCardProps) => {
     return (
         <View style={styles.captureContainer}>
             <ImageBackground
@@ -25,7 +26,7 @@ const WorkoutShareCard = ({ workoutName, duration, totalSets, userName }: Workou
                         <View style={styles.logoBox}>
                             <Dumbbell size={32} color={theme.colors.background} />
                         </View>
-                        <Text style={styles.appName}>GYM PRO</Text>
+                        <Text style={styles.appName}>GYMBRO</Text>
                     </View>
 
                     <View style={styles.mainInfo}>
@@ -54,14 +55,14 @@ const WorkoutShareCard = ({ workoutName, duration, totalSets, userName }: Workou
                         </View>
 
                         <View style={styles.statItem}>
-                            <ShieldCheck size={24} color={theme.colors.primary} />
-                            <Text style={styles.statValue}>100%</Text>
-                            <Text style={styles.statLabel}>FOCO</Text>
+                            <Trophy size={24} color={theme.colors.primary} />
+                            <Text style={styles.statValue}>{calories || 0}</Text>
+                            <Text style={styles.statLabel}>KCAL</Text>
                         </View>
                     </View>
 
                     <View style={styles.footer}>
-                        <Text style={styles.footerText}>Acompanhe meu progresso no GYM PRO</Text>
+                        <Text style={styles.footerText}>Acompanhe meu progresso no GYMBRO</Text>
                     </View>
                 </View>
             </ImageBackground>

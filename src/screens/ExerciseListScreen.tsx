@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, Image, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, Image, ActivityIndicator, ScrollView, RefreshControl } from 'react-native';
 import { theme } from '../theme/theme';
 import api from '../api/api';
 import { Search, ChevronRight } from 'lucide-react-native';
@@ -11,23 +11,37 @@ const ExerciseListScreen = ({ navigation }: any) => {
     const { t } = useTranslation();
     const [exercises, setExercises] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [search, setSearch] = useState('');
     const [muscleFilter, setMuscleFilter] = useState('All');
+    const [muscles, setMuscles] = useState<{ id: string, label: string }[]>([]);
 
-    const muscles = [
-        { id: 'All', label: t('exercises.all') },
-        { id: 'Peito', label: t('exercises.muscles.chest') },
-        { id: 'Costas', label: t('exercises.muscles.back') },
-        { id: 'Pernas', label: t('exercises.muscles.legs') },
-        { id: 'Ombros', label: t('exercises.muscles.shoulders') },
-        { id: 'Braços', label: t('exercises.muscles.arms') },
-        { id: 'Abdominais', label: t('exercises.muscles.abs') },
-        { id: 'Cardio', label: t('exercises.muscles.cardio') },
-    ];
+    const fetchExercises = async () => {
+        try {
+            const res = await api.get('/exercises');
+            const data = res.data;
+            setExercises(data);
+
+            // Dynamic muscle groups from exercises
+            const uniqueMuscles = Array.from(new Set(data.map((ex: any) => ex.muscle_group))) as string[];
+            setMuscles([
+                { id: 'All', label: t('exercises.all') },
+                ...uniqueMuscles.sort().map(m => ({ id: m, label: m }))
+            ]);
+        } catch (error) {
+            console.error('Error fetching exercises:', error);
+        }
+    };
 
     useEffect(() => {
-        api.get('/exercises').then((res) => setExercises(res.data)).finally(() => setLoading(false));
+        fetchExercises().finally(() => setLoading(false));
     }, []);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await fetchExercises();
+        setRefreshing(false);
+    };
 
     const filtered = exercises.filter((ex: any) =>
         ex.name.toLowerCase().includes(search.toLowerCase()) &&
@@ -66,6 +80,14 @@ const ExerciseListScreen = ({ navigation }: any) => {
             {loading ? <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 50 }} /> : (
                 <FlatList
                     data={filtered}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            colors={[theme.colors.primary]}
+                            tintColor={theme.colors.primary}
+                        />
+                    }
                     keyExtractor={item => item.id.toString()}
                     renderItem={({ item, index }) => (
                         <Animated.View entering={FadeInLeft.delay(index * 50)}>

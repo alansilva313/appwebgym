@@ -9,9 +9,23 @@ interface User {
     goal?: string;
     height?: number;
     weight?: number;
+    initialWeight?: number;
+    targetWeight?: number;
     gender?: string;
     language?: string;
-    waterReminderInterval?: number; // em minutos
+    waterReminderInterval?: number;
+    xp?: number;
+    level?: number;
+    workoutTime?: string;
+    age?: number;
+    birthDate?: string;
+    pairingCode?: string;
+    trainerId?: number;
+    trainer?: {
+        name: string;
+        licenseNumber?: string;
+    };
+    role?: 'student' | 'trainer' | 'admin';
 }
 
 interface AuthState {

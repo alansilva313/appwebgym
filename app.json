@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "GymBro",
     "slug": "mobile",
+    "scheme": "gymbro",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -22,37 +23,41 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.alansilva313.mobile"
+      "package": "com.alansilva313.mobile",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK",
+        "SCHEDULE_EXACT_ALARM",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "GymBro — Evolua Cada Dia",
+      "shortName": "GymBro",
+      "lang": "pt-BR",
+      "themeColor": "#BBF246",
+      "backgroundColor": "#0F0F0F",
+      "description": "Seu app de treino e evolução física. Treinos, medidas, hidratação e muito mais.",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "plugins": [
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#BBF246"
+        }
+      ]
     ],
     "extra": {
       "eas": {
         "projectId": "859ae03d-8cc5-431a-92a9-2667d7ba3dac"
       }
     }
-  },
-  "build": {
-    "preview": {
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "preview2": {
-      "android": {
-        "gradleCommand": ":app:assembleRelease"
-      }
-    },
-    "preview3": {
-      "developmentClient": true
-    },
-    "preview4": {
-      "distribution": "internal"
-    },
-    "production": {}
   }
 }

@@ -1,29 +1,34 @@
 import 'react-native-gesture-handler';
 import React, { useEffect, useCallback, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Platform } from 'react-native';
 import Navigation from './src/navigation';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { theme } from './src/theme/theme';
 import * as SplashScreen from 'expo-splash-screen';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CustomAlert from './src/components/CustomAlert';
+import AnimatedSplashScreen from './src/components/AnimatedSplashScreen';
 
-// Keep the splash screen visible while we fetch resources
-SplashScreen.preventAutoHideAsync();
+// Keep the splash screen visible while we fetch resources (native only)
+if (Platform.OS !== 'web') {
+  SplashScreen.preventAutoHideAsync();
+}
 
 export default function App() {
-  const [appIsReady, setAppIsReady] = useState(false);
+  // On web, skip splash entirely and render immediately
+  const [appIsReady, setAppIsReady] = useState(Platform.OS === 'web');
+  const [showAnimatedSplash, setShowAnimatedSplash] = useState(Platform.OS !== 'web');
 
   useEffect(() => {
+    if (Platform.OS === 'web') return; // Skip on web
+
     async function prepare() {
       try {
-        // Pre-load fonts, make any API calls you need to do here
-        // Simulating a small delay for a premium feel
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (e) {
         console.warn(e);
       } finally {
-        // Tell the application to render
         setAppIsReady(true);
       }
     }
@@ -32,8 +37,7 @@ export default function App() {
   }, []);
 
   const onLayoutRootView = useCallback(async () => {
-    if (appIsReady) {
-      // This tells the splash screen to hide immediately!
+    if (appIsReady && Platform.OS !== 'web') {
       await SplashScreen.hideAsync();
     }
   }, [appIsReady]);
@@ -43,13 +47,21 @@ export default function App() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
-      <View style={styles.container}>
-        <StatusBar style="light" />
-        <Navigation />
-        <CustomAlert />
-      </View>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
+        <View style={styles.container}>
+          <StatusBar style="light" />
+          {showAnimatedSplash ? (
+            <AnimatedSplashScreen onAnimationFinish={() => setShowAnimatedSplash(false)} />
+          ) : (
+            <>
+              <Navigation />
+              <CustomAlert />
+            </>
+          )}
+        </View>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
 
@@ -59,3 +71,4 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
 });
+

@@ -11,6 +11,7 @@ import {
     ActivityIndicator,
     Platform,
     StatusBar,
+    RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '../theme/theme';
@@ -25,6 +26,10 @@ import {
     Calendar as CalendarIcon,
     History,
     Save,
+    Info,
+    CheckCircle2,
+    X,
+    Trash2,
 } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
@@ -67,64 +72,94 @@ const MeasurementsScreen = ({ navigation }: any) => {
         latest,
         loading,
         fetchMeasurements,
-        saveMeasurement
+        saveMeasurement,
+        deleteMeasurement
     } = useMeasurementStore();
 
-    const [isAdding, setIsAdding] = useState(false);
-    const [formData, setFormData] = useState<any>({});
+    const [refreshing, setRefreshing] = useState(false);
+    const [draftData, setDraftData] = useState<any>({});
     const [selectedField, setSelectedField] = useState<any>(null);
     const [quickAddValue, setQuickAddValue] = useState('');
+    const [hasChanges, setHasChanges] = useState(false);
+    const [idToDelete, setIdToDelete] = useState<number | null>(null);
 
     useEffect(() => {
         fetchMeasurements();
     }, []);
 
-    const handleQuickSave = async () => {
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await fetchMeasurements();
+        setRefreshing(false);
+    };
+
+    const handleDraftUpdate = () => {
         if (!selectedField || !quickAddValue) return;
+        const newVal = parseFloat(quickAddValue.replace(',', '.'));
+        setDraftData({ ...draftData, [selectedField.key]: newVal });
+        setHasChanges(true);
+        setSelectedField(null);
+        setQuickAddValue('');
+    };
+
+    const handleFinalSave = async () => {
         try {
             const dataToSave: any = {
                 date: new Date().toISOString().split('T')[0],
-                [selectedField.key]: parseFloat(quickAddValue.replace(',', '.'))
             };
+
+            // Garantir que estamos pegando todos os campos necessários
+            FIELDS.forEach(f => {
+                const val = draftData[f.key] !== undefined
+                    ? draftData[f.key]
+                    : (latest ? latest[f.key as keyof MeasurementData] : null);
+
+                if (val !== null && val !== undefined) {
+                    dataToSave[f.key] = val;
+                }
+            });
+
+            if (Object.keys(dataToSave).length <= 1) { // Só tem a data
+                showAlert(t('common.error'), t('measurements.no_data_to_save', 'Preencha ao menos uma medida para salvar.'));
+                return;
+            }
+
             await saveMeasurement(dataToSave);
             showAlert(t('common.success'), t('measurements.save_success'));
-            setSelectedField(null);
-            setQuickAddValue('');
+            setDraftData({});
+            setHasChanges(false);
         } catch (error) {
             showAlert(t('common.error'), t('measurements.save_error'));
         }
     };
 
-    const handleSave = async () => {
+    const handleOpenDeleteConfirm = (id: number) => {
+        if (id) {
+            setIdToDelete(id);
+        }
+    };
+
+    const confirmDelete = async () => {
+        if (!idToDelete) return;
         try {
-            const dataToSave: any = {
-                date: new Date().toISOString().split('T')[0],
-            };
-
-            FIELDS.forEach(f => {
-                if (formData[f.key]) {
-                    dataToSave[f.key] = parseFloat(formData[f.key].replace(',', '.'));
-                }
-            });
-
-            await saveMeasurement(dataToSave);
-            showAlert(t('common.success'), t('measurements.save_success'));
-            setIsAdding(false);
-            setFormData({});
+            await deleteMeasurement(idToDelete);
+            showAlert(t('common.success'), t('measurements.delete_success', 'Avaliação excluída.'));
         } catch (error) {
-            showAlert(t('common.error'), t('measurements.save_error'));
+            showAlert(t('common.error'), t('measurements.delete_error', 'Erro ao excluir.'));
+        } finally {
+            setIdToDelete(null);
         }
     };
 
     const getComparison = (key: string) => {
-        if (measurements.length < 2) return null;
-        const current = measurements[0][key as keyof MeasurementData] as number;
-        const prev = measurements[1][key as keyof MeasurementData] as number;
+        if (!measurements || measurements.length < 2) return null;
+        const currentField = measurements[0][key as keyof MeasurementData];
+        const prevField = measurements[1][key as keyof MeasurementData];
 
-        if (!current || !prev) return null;
+        if (typeof currentField !== 'number' || typeof prevField !== 'number') return null;
 
-        const diff = current - prev;
-        if (diff === 0) return null;
+        const diff = (currentField as number) - (prevField as number);
+        if (Math.abs(diff) < 0.01) return null;
 
         return {
             val: Math.abs(diff).toFixed(1),
@@ -139,29 +174,28 @@ const MeasurementsScreen = ({ navigation }: any) => {
                 <ChevronLeft size={28} color={theme.colors.white} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>{t('measurements.title')}</Text>
-            <TouchableOpacity onPress={() => setIsAdding(true)} style={styles.addBtn}>
-                <Plus size={24} color={theme.colors.primary} />
-            </TouchableOpacity>
+            <View style={{ width: 28 }} />
         </View>
     );
 
     const renderLatest = () => {
-        if (!latest) return (
-            <View style={styles.emptyContainer}>
-                <History size={48} color={theme.colors.border} />
-                <Text style={styles.emptyText}>{t('measurements.no_data')}</Text>
-                <TouchableOpacity style={styles.emptyBtn} onPress={() => setIsAdding(true)}>
-                    <Text style={styles.emptyBtnText}>{t('measurements.add_new')}</Text>
-                </TouchableOpacity>
-            </View>
-        );
-
         const anatomyImage = user?.gender === 'Feminino'
             ? require('../../assets/body-anatomy-female.png')
             : require('../../assets/body-anatomy-male.png');
 
         return (
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollContent}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        colors={[theme.colors.primary]}
+                        tintColor={theme.colors.primary}
+                    />
+                }
+            >
                 <View style={styles.heroSection}>
                     <View style={styles.anatomyContainer}>
                         <Image
@@ -169,71 +203,146 @@ const MeasurementsScreen = ({ navigation }: any) => {
                             style={styles.anatomyImg}
                             resizeMode="contain"
                         />
-                        {BODY_POINTS.map((point) => (
-                            <TouchableOpacity
-                                key={point.key}
-                                style={[styles.dot, { top: point.top as any, left: point.left as any }]}
-                                onPress={() => {
-                                    const field = FIELDS.find(f => f.key === point.key);
-                                    setSelectedField(field);
-                                    setQuickAddValue(latest ? latest[field!.key as keyof MeasurementData]?.toString() || '' : '');
-                                }}
-                            >
-                                <View style={styles.dotTouch} />
-                            </TouchableOpacity>
-                        ))}
+                        {BODY_POINTS.map((point) => {
+                            const isDrafted = draftData[point.key] !== undefined;
+                            return (
+                                <TouchableOpacity
+                                    key={point.key}
+                                    style={[
+                                        styles.dot,
+                                        { top: point.top as any, left: point.left as any },
+                                        isDrafted && { backgroundColor: theme.colors.white, borderWidth: 2, borderColor: theme.colors.primary }
+                                    ]}
+                                    onPress={() => {
+                                        const field = FIELDS.find(f => f.key === point.key);
+                                        setSelectedField(field);
+                                        // Mostra o valor do draft se houver, senão o valor atual (latest)
+                                        const valToShow = draftData[point.key] !== undefined
+                                            ? draftData[point.key]
+                                            : (latest ? latest[field!.key as keyof MeasurementData] : '');
+                                        setQuickAddValue(valToShow?.toString() || '');
+                                    }}
+                                >
+                                    <View style={styles.dotTouch} />
+                                </TouchableOpacity>
+                            );
+                        })}
                     </View>
 
-                    <View style={styles.latestMeta}>
-                        <Text style={styles.updateDate}>
-                            {t('measurements.latest_update', { date: new Date(latest.date).toLocaleDateString() })}
-                        </Text>
-                    </View>
+                    {latest ? (
+                        <View style={styles.latestMeta}>
+                            <Text style={styles.updateDate}>
+                                {t('measurements.latest_update', { date: new Date(latest.date).toLocaleDateString() })}
+                            </Text>
+                        </View>
+                    ) : (
+                        <View style={styles.latestMeta}>
+                            <Text style={[styles.updateDate, { color: theme.colors.primary }]}>
+                                {t('measurements.start_filling', 'Toque nos pontos para iniciar a avaliação')}
+                            </Text>
+                        </View>
+                    )}
                 </View>
 
-                <View style={styles.statsGrid}>
-                    {FIELDS.map((field, idx) => {
-                        const val = latest[field.key as keyof MeasurementData];
-                        const comp = getComparison(field.key);
-                        if (!val) return null;
+                {hasChanges && (
+                    <Animated.View entering={FadeInDown} style={styles.floatingAction}>
+                        <TouchableOpacity style={styles.saveAllBtn} onPress={handleFinalSave}>
+                            <CheckCircle2 size={20} color={theme.colors.background} />
+                            <Text style={styles.saveBtnText}>{t('measurements.finish_assessment', 'Concluir Avaliação')}</Text>
+                        </TouchableOpacity>
+                    </Animated.View>
+                )}
+                <View style={styles.noticeBox}>
+                    <Info size={16} color={theme.colors.primary} />
+                    <Text style={styles.noticeText}>
+                        {t('measurements.experience_notice', 'Para maior precisão, recomendamos que as medidas corporais sejam tiradas por alguém com experiência.')}
+                    </Text>
+                </View>
 
-                        return (
+                {latest ? (
+                    <View style={styles.statsGrid}>
+                        {FIELDS.map((field, idx) => {
+                            const val = latest[field.key as keyof MeasurementData];
+                            const comp = getComparison(field.key);
+                            if (!val) return null;
+
+                            return (
+                                <Animated.View
+                                    key={field.key}
+                                    entering={FadeInDown.delay(idx * 50)}
+                                    style={styles.statCard}
+                                >
+                                    <Text style={styles.statLabel}>{t(`measurements.${field.label}`)}</Text>
+                                    <View style={styles.statMain}>
+                                        <Text style={styles.statValue}>{val}</Text>
+                                        <Text style={styles.statUnit}>{field.unit}</Text>
+                                    </View>
+                                    {comp && (
+                                        <View style={styles.compRow}>
+                                            {comp.isUp ? <TrendingUp size={12} color={comp.color} /> : <TrendingDown size={12} color={comp.color} />}
+                                            <Text style={[styles.compText, { color: comp.color }]}>
+                                                {comp.isUp ? t('measurements.diff_plus', { val: comp.val }) : t('measurements.diff_minus', { val: comp.val })}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </Animated.View>
+                            );
+                        })}
+                    </View>
+                ) : (
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>{t('measurements.no_data')}</Text>
+                        <TouchableOpacity style={styles.emptyBtn} onPress={() => setSelectedField(FIELDS[0])}>
+                            <Text style={styles.emptyBtnText}>{t('measurements.add_new')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {measurements.length > 0 && (
+                    <View style={styles.historySection}>
+                        <View style={styles.sectionHeader}>
+                            <View style={styles.sectionTitleRow}>
+                                <History size={20} color={theme.colors.primary} />
+                                <Text style={styles.sectionTitle}>{t('measurements.history')}</Text>
+                            </View>
+                        </View>
+                        {measurements.map((m: any, idx) => (
                             <Animated.View
-                                key={field.key}
-                                entering={FadeInDown.delay(idx * 50)}
-                                style={styles.statCard}
+                                key={m.id}
+                                entering={FadeInRight.delay(idx * 100)}
+                                style={styles.historyCard}
                             >
-                                <Text style={styles.statLabel}>{t(`measurements.${field.label}`)}</Text>
-                                <View style={styles.statMain}>
-                                    <Text style={styles.statValue}>{val}</Text>
-                                    <Text style={styles.statUnit}>{field.unit}</Text>
-                                </View>
-                                {comp && (
-                                    <View style={styles.compRow}>
-                                        {comp.isUp ? <TrendingUp size={12} color={comp.color} /> : <TrendingDown size={12} color={comp.color} />}
-                                        <Text style={[styles.compText, { color: comp.color }]}>
-                                            {comp.isUp ? t('measurements.diff_plus', { val: comp.val }) : t('measurements.diff_minus', { val: comp.val })}
+                                <View style={styles.historyInfo}>
+                                    <View style={styles.historyHeader}>
+                                        <CalendarIcon size={14} color={theme.colors.primary} />
+                                        <Text style={styles.historyDate}>
+                                            {new Date(m.date).toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: 'numeric' })}
                                         </Text>
                                     </View>
-                                )}
-                            </Animated.View>
-                        );
-                    })}
-                </View>
+                                    <View style={styles.historyStats}>
+                                        <View style={styles.historyStatItem}>
+                                            <Text style={styles.historyStatLabel}>{t('measurements.weight')}</Text>
+                                            <Text style={styles.historyStatValue}>{m.weight || '--'}kg</Text>
+                                        </View>
+                                        <View style={styles.historyDivider} />
+                                        <View style={styles.historyStatItem}>
+                                            <Text style={styles.historyStatLabel}>{t('measurements.waist')}</Text>
+                                            <Text style={styles.historyStatValue}>{m.waist || '--'}cm</Text>
+                                        </View>
+                                    </View>
+                                </View>
 
-                <View style={styles.historySection}>
-                    <View style={styles.sectionHeader}>
-                        <History size={20} color={theme.colors.textSecondary} />
-                        <Text style={styles.sectionTitle}>{t('measurements.history')}</Text>
+                                <TouchableOpacity
+                                    onPress={() => m.id && handleOpenDeleteConfirm(m.id)}
+                                    style={styles.deleteAction}
+                                    activeOpacity={0.7}
+                                >
+                                    <Trash2 size={18} color={theme.colors.error} />
+                                </TouchableOpacity>
+                            </Animated.View>
+                        ))}
                     </View>
-                    {measurements.slice(1, 5).map((m, idx) => (
-                        <View key={m.id} style={styles.historyItem}>
-                            <Text style={styles.historyDate}>{new Date(m.date).toLocaleDateString()}</Text>
-                            <Text style={styles.historyWeight}>{m.weight}kg</Text>
-                            <ChevronRight size={16} color={theme.colors.border} />
-                        </View>
-                    ))}
-                </View>
+                )}
             </ScrollView>
         );
     };
@@ -243,58 +352,13 @@ const MeasurementsScreen = ({ navigation }: any) => {
             <StatusBar barStyle="light-content" />
             {renderHeader()}
 
-            {loading && !isAdding ? (
+            {loading && !hasChanges ? (
                 <View style={styles.centered}>
                     <ActivityIndicator size="large" color={theme.colors.primary} />
                 </View>
             ) : renderLatest()}
 
-
-            <Modal visible={isAdding} animationType="slide" transparent>
-                <View style={styles.modalOverlay}>
-                    <View style={[styles.modalContent, { paddingBottom: (insets.bottom || 0) + 20 }]}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>{t('measurements.add_new')}</Text>
-                            <TouchableOpacity onPress={() => setIsAdding(false)}>
-                                <Plus size={24} color={theme.colors.white} style={{ transform: [{ rotate: '45deg' }] }} />
-                            </TouchableOpacity>
-                        </View>
-
-                        <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
-                            <View style={styles.formGrid}>
-                                {FIELDS.map((f) => (
-                                    <View key={f.key} style={styles.inputWrap}>
-                                        <Text style={styles.inputLabel}>{t(`measurements.${f.label}`)} ({f.unit})</Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="0.0"
-                                            placeholderTextColor={theme.colors.border}
-                                            keyboardType="numeric"
-                                            value={formData[f.key]}
-                                            onChangeText={(v) => setFormData({ ...formData, [f.key]: v })}
-                                        />
-                                    </View>
-                                ))}
-                            </View>
-                        </ScrollView>
-
-                        <TouchableOpacity
-                            style={[styles.saveBtn, loading && { opacity: 0.7 }]}
-                            onPress={handleSave}
-                            disabled={loading}
-                        >
-                            {loading ? (
-                                <ActivityIndicator color={theme.colors.background} />
-                            ) : (
-                                <>
-                                    <Save size={20} color={theme.colors.background} />
-                                    <Text style={styles.saveBtnText}>{t('common.save')}</Text>
-                                </>
-                            )}
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+            {/* Modal de confirmação removido, substituído por salvar direto no ponto */}
 
             {/* Quick Add Modal */}
             <Modal visible={!!selectedField} animationType="fade" transparent>
@@ -305,7 +369,7 @@ const MeasurementsScreen = ({ navigation }: any) => {
                                 {selectedField && t(`measurements.${selectedField.label}`)}
                             </Text>
                             <TouchableOpacity onPress={() => setSelectedField(null)}>
-                                <Plus size={24} color={theme.colors.white} style={{ transform: [{ rotate: '45deg' }] }} />
+                                <X size={24} color={theme.colors.white} />
                             </TouchableOpacity>
                         </View>
 
@@ -323,17 +387,47 @@ const MeasurementsScreen = ({ navigation }: any) => {
                         </View>
 
                         <TouchableOpacity
-                            style={[styles.saveBtn, loading && { opacity: 0.7 }]}
-                            onPress={handleQuickSave}
-                            disabled={loading}
+                            style={styles.saveBtn}
+                            onPress={handleDraftUpdate}
                         >
-                            {loading ? (
-                                <ActivityIndicator color={theme.colors.background} />
-                            ) : (
-                                <Text style={styles.saveBtnText}>{t('common.save')}</Text>
-                            )}
+                            <Text style={styles.saveBtnText}>{t('common.confirm', 'Confirmar')}</Text>
                         </TouchableOpacity>
                     </View>
+                </View>
+            </Modal>
+
+            {/* Modal de confirmação personalizado */}
+            <Modal visible={idToDelete !== null} animationType="fade" transparent>
+                <View style={styles.confirmOverlay}>
+                    <Animated.View entering={FadeInDown} style={styles.confirmContent}>
+                        <View style={styles.confirmIconBg}>
+                            <Trash2 size={32} color={theme.colors.error} />
+                        </View>
+                        <Text style={styles.confirmTitle}>{t('common.confirm_delete', 'Confirmar Exclusão')}</Text>
+                        <Text style={styles.confirmDesc}>
+                            {t('measurements.delete_confirm_msg', 'Deseja realmente excluir esta avaliação? Esta ação não pode ser desfeita.')}
+                        </Text>
+
+                        <View style={styles.confirmActions}>
+                            <TouchableOpacity
+                                style={styles.confirmCancelBtn}
+                                onPress={() => setIdToDelete(null)}
+                            >
+                                <Text style={styles.confirmCancelText}>{t('common.cancel', 'Cancelar')}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.confirmDeleteBtn}
+                                onPress={confirmDelete}
+                                disabled={loading}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator color={theme.colors.white} />
+                                ) : (
+                                    <Text style={styles.confirmDeleteText}>{t('common.delete', 'Excluir')}</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </Animated.View>
                 </View>
             </Modal>
         </View>
@@ -394,6 +488,24 @@ const styles = StyleSheet.create({
     latestMeta: { marginTop: 15 },
     updateDate: { color: theme.colors.textSecondary, fontSize: 13 },
 
+    noticeBox: {
+        flexDirection: 'row',
+        backgroundColor: theme.colors.surface,
+        padding: 12,
+        borderRadius: 12,
+        marginBottom: 20,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: theme.colors.primary + '40',
+        gap: 10,
+    },
+    noticeText: {
+        flex: 1,
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        lineHeight: 18,
+    },
+
     statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
     statCard: {
         width: '48%',
@@ -405,25 +517,143 @@ const styles = StyleSheet.create({
     },
     statLabel: { color: theme.colors.textSecondary, fontSize: 12, marginBottom: 4 },
     statMain: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+    statHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+    draftBadge: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.primary },
     statValue: { fontSize: 22, fontWeight: 'bold', color: theme.colors.white },
     statUnit: { fontSize: 12, color: theme.colors.textSecondary },
     compRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 },
     compText: { fontSize: 11, fontWeight: 'bold' },
 
-    historySection: { marginTop: 40, marginBottom: 50 },
-    sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15 },
-    sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-    historyItem: {
+    floatingAction: {
+        marginBottom: 20,
+    },
+    saveAllBtn: {
+        backgroundColor: theme.colors.primary,
+        height: 56,
+        borderRadius: 16,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 10,
+        shadowColor: theme.colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 5,
+    },
+
+    historySection: { marginTop: 40, marginBottom: 100 },
+    sectionHeader: { marginBottom: 20 },
+    sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
+
+    historyCard: {
+        backgroundColor: theme.colors.surface,
+        borderRadius: 20,
+        padding: 16,
+        marginBottom: 16,
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
     },
-    historyDate: { flex: 1, color: theme.colors.white, fontWeight: '500' },
-    historyWeight: { color: theme.colors.textSecondary, marginRight: 15 },
+    historyInfo: { flex: 1 },
+    historyHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+    historyDate: { color: theme.colors.textSecondary, fontSize: 13, textTransform: 'capitalize' },
+    historyStats: { flexDirection: 'row', alignItems: 'center', gap: 20 },
+    historyStatItem: { gap: 2 },
+    historyStatLabel: { color: theme.colors.textSecondary, fontSize: 11 },
+    historyStatValue: { color: theme.colors.white, fontSize: 16, fontWeight: 'bold' },
+    historyDivider: { width: 1, height: 25, backgroundColor: theme.colors.border },
+    deleteAction: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: theme.colors.error + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 10,
+    },
 
-    emptyContainer: { flex: 1, paddingVertical: 100, alignItems: 'center', gap: 20 },
+    confirmOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 30,
+    },
+    confirmContent: {
+        backgroundColor: theme.colors.surface,
+        borderRadius: 28,
+        padding: 24,
+        width: '100%',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+    },
+    confirmIconBg: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: theme.colors.error + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    confirmTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: theme.colors.white,
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    confirmDesc: {
+        fontSize: 15,
+        color: theme.colors.textSecondary,
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: 30,
+    },
+    confirmActions: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+    },
+    confirmCancelBtn: {
+        flex: 1,
+        height: 52,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: theme.colors.background,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+    },
+    confirmCancelText: {
+        color: theme.colors.white,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    confirmDeleteBtn: {
+        flex: 1,
+        height: 52,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: theme.colors.error,
+    },
+    confirmDeleteText: {
+        color: theme.colors.white,
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+
+    emptyContainer: { paddingVertical: 40, alignItems: 'center', gap: 20 },
     emptyText: { color: theme.colors.textSecondary, textAlign: 'center' },
     emptyBtn: { backgroundColor: theme.colors.primary, paddingHorizontal: 30, paddingVertical: 12, borderRadius: 12 },
     emptyBtnText: { color: theme.colors.background, fontWeight: 'bold' },

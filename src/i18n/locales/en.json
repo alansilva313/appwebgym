@@ -10,7 +10,7 @@
         "close": "Close"
     },
     "welcome": "Welcome back!",
-    "app_name": "GYM PRO",
+    "app_name": "GymBro",
     "app_subtitle": "Your personal trainer in your pocket",
     "onboarding": {
         "title": "Your journey starts here",
@@ -55,7 +55,9 @@
             "normal": "Normal",
             "overweight": "Overweight",
             "obese": "Obese"
-        }
+        },
+        "heatmap_title": "Muscle Focus (7 days)",
+        "heatmap_subtitle": "Intensity by muscle group"
     },
     "login": {
         "email": "Email",
@@ -174,7 +176,7 @@
         "share_social": "Share to Stories",
         "share_preview": "Stories Preview",
         "share_now": "Share Now",
-        "share_title": "My workout at GYM PRO",
+        "share_title": "My workout at GymBro",
         "share_error": "Could not generate image to share."
     },
     "settings": {

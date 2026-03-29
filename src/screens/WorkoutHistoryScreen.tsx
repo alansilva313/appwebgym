@@ -9,6 +9,7 @@ import {
     RefreshControl,
     Platform,
     StatusBar,
+    Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -41,10 +42,12 @@ interface StatsSummary {
 
 interface Session {
     id: number;
+    workoutId?: number;
     workoutName: string;
     totalTimeSeconds: number;
     totalSetsCompleted: number;
     totalExercises: number;
+    totalVolumeKg?: number;
     avgRestTimeTaken: number;
     avgTimeBetweenSets: number;
     completedAt: string;
@@ -110,6 +113,34 @@ const WorkoutHistoryScreen = ({ navigation }: any) => {
         return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     };
 
+    const getProgression = (current: Session) => {
+        // Find the most recent session BEFORE this one with the same workoutId or Name
+        const pastSessions = sessions.filter(s =>
+            s.id !== current.id &&
+            (s.workoutId ? s.workoutId === current.workoutId : s.workoutName === current.workoutName) &&
+            new Date(s.completedAt).getTime() < new Date(current.completedAt).getTime()
+        ).sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
+
+        if (pastSessions.length === 0) return null;
+
+        const prev = pastSessions[0];
+
+        const volumeDiff = (current.totalVolumeKg || 0) - (prev.totalVolumeKg || 0);
+        const volumePerc = prev.totalVolumeKg ? (volumeDiff / prev.totalVolumeKg) * 100 : 0;
+
+        const setsDiff = current.totalSetsCompleted - prev.totalSetsCompleted;
+        const timeDiff = prev.totalTimeSeconds - current.totalTimeSeconds; // Positivo se for mais rápido
+
+        return {
+            prevDate: prev.completedAt,
+            volumeDiff,
+            volumePerc,
+            setsDiff,
+            timeDiff,
+            isImproving: volumeDiff > 0 || (volumeDiff === 0 && timeDiff > 0)
+        };
+    };
+
     if (loading) {
         return (
             <View style={[styles.container, { paddingTop: topInset }]}>
@@ -132,16 +163,26 @@ const WorkoutHistoryScreen = ({ navigation }: any) => {
 
             {/* ── Header ── */}
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                    <ChevronLeft size={26} color={theme.colors.white} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Histórico de Treinos</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    {navigation.canGoBack() ? (
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                            <ChevronLeft size={26} color={theme.colors.white} />
+                        </TouchableOpacity>
+                    ) : (
+                        <Animated.Image
+                            entering={FadeIn.delay(100)}
+                            source={require('../../assets/icon.png')}
+                            style={{ width: 28, height: 28, borderRadius: 6 }}
+                        />
+                    )}
+                    <Text style={styles.headerTitle}>Histórico de Treinos</Text>
+                </View>
                 <View style={{ width: 36 }} />
             </View>
 
             <ScrollView
                 contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 24 }]}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tint={theme.colors.primary} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
                 showsVerticalScrollIndicator={false}
             >
                 {/* ── Summary stats ── */}
@@ -267,6 +308,53 @@ const WorkoutHistoryScreen = ({ navigation }: any) => {
                                     {/* Expanded: per-exercise breakdown */}
                                     {isExpanded && session.exerciseLogs?.length > 0 && (
                                         <View style={styles.exerciseBreakdown}>
+                                            {/* Evolution Insight */}
+                                            {(() => {
+                                                const prog = getProgression(session);
+                                                if (!prog) return null;
+                                                return (
+                                                    <View style={[styles.progressionCard, { borderColor: prog.volumeDiff >= 0 ? theme.colors.success + '40' : theme.colors.error + '40' }]}>
+                                                        <View style={styles.progHeader}>
+                                                            <TrendingUp size={16} color={prog.volumeDiff >= 0 ? theme.colors.success : theme.colors.error} />
+                                                            <Text style={[styles.progTitle, { color: prog.volumeDiff >= 0 ? theme.colors.success : theme.colors.error }]}>
+                                                                {prog.volumeDiff >= 0 ? 'Evolução Detectada!' : 'Abaixo da performance anterior'}
+                                                            </Text>
+                                                        </View>
+                                                        <Text style={styles.progComparison}>Comparado a {formatDate(prog.prevDate)}:</Text>
+
+                                                        <View style={styles.progMetrics}>
+                                                            <View style={styles.progMetric}>
+                                                                <Text style={styles.progMetricLabel}>Volume</Text>
+                                                                <Text style={[styles.progMetricValue, { color: prog.volumeDiff >= 0 ? theme.colors.success : theme.colors.error }]}>
+                                                                    {prog.volumeDiff > 0 ? '+' : ''}{prog.volumeDiff.toFixed(1)}kg ({Math.abs(prog.volumePerc).toFixed(1)}%)
+                                                                </Text>
+                                                            </View>
+                                                            <View style={styles.progMetric}>
+                                                                <Text style={styles.progMetricLabel}>Séries</Text>
+                                                                <Text style={[styles.progMetricValue, { color: prog.setsDiff >= 0 ? theme.colors.success : theme.colors.error }]}>
+                                                                    {prog.setsDiff > 0 ? '+' : ''}{prog.setsDiff} sets
+                                                                </Text>
+                                                            </View>
+                                                            <View style={styles.progMetric}>
+                                                                <Text style={styles.progMetricLabel}>Duração</Text>
+                                                                <Text style={[styles.progMetricValue, { color: prog.timeDiff >= 0 ? theme.colors.success : theme.colors.error }]}>
+                                                                    {prog.timeDiff > 0 ? '-' : '+'}{formatTime(Math.abs(prog.timeDiff))}
+                                                                </Text>
+                                                            </View>
+                                                        </View>
+
+                                                        <Text style={styles.progInsight}>
+                                                            {prog.volumeDiff > 0
+                                                                ? 'Excelente! Você aumentou a carga total movimentada.'
+                                                                : prog.volumeDiff < 0
+                                                                    ? 'Foco na próxima! Você treinou com menos carga do que da última vez.'
+                                                                    : 'Consistência é a chave. Você manteve o mesmo ritmo.'}
+                                                        </Text>
+                                                    </View>
+                                                );
+                                            })()}
+
+                                            <View style={{ height: 16 }} />
                                             <Text style={styles.breakdownHeader}>Detalhamento</Text>
                                             {session.exerciseLogs.map((log: any, li: number) => (
                                                 <View key={li} style={styles.exLogRow}>
@@ -276,7 +364,7 @@ const WorkoutHistoryScreen = ({ navigation }: any) => {
                                                             <View key={si} style={styles.exLogSet}>
                                                                 <Text style={styles.exLogSetNum}>S{s.setNumber}</Text>
                                                                 <Text style={styles.exLogSetStat}>⏱{s.timeBetweenSets}s</Text>
-                                                                <Text style={styles.exLogSetStat}>💤{s.restTimeTaken}s</Text>
+                                                                <Text style={styles.exLogSetStat}>⚖️{s.load || '0'}kg</Text>
                                                             </View>
                                                         ))}
                                                     </View>
@@ -390,6 +478,23 @@ const styles = StyleSheet.create({
     },
     exLogSetNum: { fontSize: theme.fontSize.xs, color: theme.colors.primary, fontWeight: 'bold' },
     exLogSetStat: { fontSize: theme.fontSize.xs, color: theme.colors.textSecondary },
+
+    // ── Progression Card
+    progressionCard: {
+        backgroundColor: theme.colors.background,
+        borderRadius: theme.borderRadius.md,
+        padding: theme.spacing.md,
+        borderWidth: 1,
+        marginTop: 4,
+    },
+    progHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+    progTitle: { fontSize: 13, fontWeight: 'bold' },
+    progComparison: { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 12 },
+    progMetrics: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+    progMetric: { alignItems: 'center' },
+    progMetricLabel: { fontSize: 10, color: theme.colors.textSecondary, textTransform: 'uppercase', marginBottom: 2 },
+    progMetricValue: { fontSize: 12, fontWeight: 'bold' },
+    progInsight: { fontSize: 11, color: theme.colors.textSecondary, fontStyle: 'italic', borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 8 },
 });
 
 export default WorkoutHistoryScreen;

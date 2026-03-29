@@ -22,8 +22,12 @@ import {
     X,
     Search,
     ChevronLeft,
+    ChevronUp,
+    ChevronDown,
     Save,
     Check,
+    ArrowUpDown,
+    Trash2
 } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -51,12 +55,26 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
     const updateWorkout = useWorkoutStore(s => s.updateWorkout);
     const [initialLoading, setInitialLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [selectedMuscle, setSelectedMuscle] = useState('All');
+    const [tempSelectedExercises, setTempSelectedExercises] = useState<any[]>([]);
+    const [selectedExerciseDetail, setSelectedExerciseDetail] = useState<any>(null);
+
+    const musclesList = React.useMemo(() => {
+        const unique = Array.from(new Set(allExercises.map((e: any) => e.muscle_group)));
+        return ['All', ...unique.sort()];
+    }, [allExercises]);
 
     const showAlert = useAlertStore(s => s.showAlert);
 
     useEffect(() => {
         loadData();
     }, []);
+
+    const fixUrl = (url: string) => {
+        if (!url) return '';
+        if (url.startsWith('http')) return url;
+        return `${api.defaults.baseURL}${url}`;
+    };
 
     const loadData = async () => {
         try {
@@ -72,6 +90,7 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                 muscle_group: we.exercise?.muscle_group || '',
                 sets: (we.sets || 3).toString(),
                 reps: (we.reps || 10).toString(),
+                load: (we.load || '0').toString(),
                 workoutExerciseId: we.id,
             }));
             setSelectedExercises(mapped);
@@ -82,6 +101,7 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                 muscle_group: ex.muscle_group || ex.exercise?.muscle_group,
                 sets: (ex.WorkoutExercise?.sets || ex.sets || 3).toString(),
                 reps: (ex.WorkoutExercise?.reps || ex.reps || 10).toString(),
+                load: (ex.WorkoutExercise?.load || ex.load || '0').toString(),
             }));
             setSelectedExercises(fallback);
         } finally {
@@ -97,11 +117,42 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
         }
     };
 
-    const updateExerciseStat = (id: number, field: 'sets' | 'reps', value: string) => {
-        const strNum = value.replace(/[^0-9]/g, '');
+    const updateExerciseStat = (id: number, field: 'sets' | 'reps' | 'load', value: string) => {
+        const filteredValue = field === 'load' ? value : value.replace(/[^0-9]/g, '');
         setSelectedExercises(prev =>
-            prev.map(ex => ex.id === id ? { ...ex, [field]: strNum } : ex)
+            prev.map(ex => ex.id === id ? { ...ex, [field]: filteredValue } : ex)
         );
+    };
+
+    const moveExercise = (index: number, direction: 'up' | 'down') => {
+        const newIndex = direction === 'up' ? index - 1 : index + 1;
+        if (newIndex < 0 || newIndex >= selectedExercises.length) return;
+
+        const newArr = [...selectedExercises];
+        const temp = newArr[index];
+        newArr[index] = newArr[newIndex];
+        newArr[newIndex] = temp;
+        setSelectedExercises(newArr);
+    };
+
+    const smartSort = () => {
+        const priority: { [key: string]: number } = {
+            'Peito': 1, 'Chest': 1,
+            'Costas': 1, 'Back': 1, 'Lombar': 1,
+            'Pernas': 1, 'Legs': 1, 'Quadríceps': 1, 'Posterior': 1, 'Glúteos': 1,
+            'Ombros': 2, 'Shoulders': 2, 'Trapézio': 2,
+            'Bíceps': 3, 'Biceps': 3,
+            'Tríceps': 3, 'Triceps': 3, 'Antebraço': 3,
+            'Abdominais': 4, 'Abs': 4,
+            'Panturrilha': 4, 'Calves': 4
+        };
+
+        const sorted = [...selectedExercises].sort((a, b) => {
+            const prioA = priority[a.muscle_group] || 5;
+            const prioB = priority[b.muscle_group] || 5;
+            return prioA - prioB;
+        });
+        setSelectedExercises(sorted);
     };
 
     const removeExercise = (id: number) => {
@@ -110,7 +161,7 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
 
     const addExercise = (item: any) => {
         if (!selectedExercises.find(ex => ex.id === item.id)) {
-            setSelectedExercises(prev => [...prev, { ...item, sets: '3', reps: '10' }]);
+            setSelectedExercises(prev => [...prev, { ...item, sets: '3', reps: '10', load: '0' }]);
         }
         setShowExercisesModal(false);
         setSearch('');
@@ -136,6 +187,7 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                     exerciseId: ex.id,
                     sets: parseInt(ex.sets as any, 10) || 3,
                     reps: parseInt(ex.reps as any, 10) || 10,
+                    load: ex.load || '0',
                 })),
             });
             showAlert(t('common.success'), t('workouts.update_success', 'Treino atualizado com sucesso!'), [
@@ -149,7 +201,8 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
     };
 
     const filteredExercises = allExercises.filter((e: any) =>
-        e.name?.toLowerCase().includes(search.toLowerCase())
+        (e.name?.toLowerCase().includes(search.toLowerCase())) &&
+        (selectedMuscle === 'All' || e.muscle_group === selectedMuscle)
     );
 
     // Calculate the top safe area manually for cross-platform correctness
@@ -239,16 +292,31 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                     <Text style={styles.label}>
                         {t('workouts.exercises_count', { count: selectedExercises.length })}
                     </Text>
-                    <TouchableOpacity style={styles.addBtn} onPress={() => setShowExercisesModal(true)}>
-                        <Plus size={18} color={theme.colors.background} />
-                        <Text style={styles.addBtnText}>{t('common.add')}</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                        {selectedExercises.length > 1 && (
+                            <TouchableOpacity style={styles.sortBtn} onPress={smartSort}>
+                                <ArrowUpDown size={18} color={theme.colors.primary} />
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity style={styles.addBtn} onPress={() => setShowExercisesModal(true)}>
+                            <Plus size={18} color={theme.colors.background} />
+                            <Text style={styles.addBtnText}>{t('common.add')}</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {selectedExercises.map((ex, index) => (
                     <Animated.View key={`${ex.id}-${index}`} entering={FadeInDown.delay(index * 60)}>
                         <View style={styles.exCard}>
-                            <View style={styles.exInfo}>
+                            <View style={styles.reorderHandle}>
+                                <TouchableOpacity onPress={() => moveExercise(index, 'up')} disabled={index === 0}>
+                                    <ChevronUp size={20} color={index === 0 ? theme.colors.textSecondary + '40' : theme.colors.textSecondary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => moveExercise(index, 'down')} disabled={index === selectedExercises.length - 1}>
+                                    <ChevronDown size={20} color={index === selectedExercises.length - 1 ? theme.colors.textSecondary + '40' : theme.colors.textSecondary} />
+                                </TouchableOpacity>
+                            </View>
+                            <View style={[styles.exInfo, { marginLeft: 8 }]}>
                                 <Text style={styles.exName} numberOfLines={1}>{ex.name}</Text>
                                 <Text style={styles.exMuscle}>{ex.muscle_group}</Text>
                             </View>
@@ -271,8 +339,23 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                                         onChangeText={v => updateExerciseStat(ex.id, 'reps', v)}
                                     />
                                 </View>
-                                <TouchableOpacity onPress={() => removeExercise(ex.id)} style={{ padding: 4 }}>
-                                    <X size={20} color={theme.colors.error} />
+                                <View style={styles.inputWrap}>
+                                    <Text style={styles.miniLabel}>KG</Text>
+                                    <TextInput
+                                        keyboardType="numeric"
+                                        style={styles.miniInput}
+                                        value={ex.load}
+                                        onChangeText={v => updateExerciseStat(ex.id, 'load', v)}
+                                        placeholder="0"
+                                        placeholderTextColor={theme.colors.textSecondary}
+                                    />
+                                </View>
+                                <TouchableOpacity
+                                    onPress={() => removeExercise(ex.id)}
+                                    style={{ padding: 8 }}
+                                    activeOpacity={0.7}
+                                >
+                                    <Trash2 size={18} color={theme.colors.error} />
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -286,7 +369,7 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                     <View style={styles.modalHeader}>
                         <Text style={styles.modalTitle}>{t('workouts.add_exercise')}</Text>
                         <TouchableOpacity
-                            onPress={() => { setShowExercisesModal(false); setSearch(''); }}
+                            onPress={() => { setShowExercisesModal(false); setSearch(''); setTempSelectedExercises([]); }}
                             style={{ padding: 4 }}
                         >
                             <X size={24} color="#fff" />
@@ -305,6 +388,29 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                         />
                     </View>
 
+                    <View style={{ height: 50, marginBottom: 10 }}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 10 }}>
+                            {musclesList.map(m => (
+                                <TouchableOpacity
+                                    key={m}
+                                    onPress={() => setSelectedMuscle(m)}
+                                    style={[
+                                        styles.filterChip,
+                                        selectedMuscle === m && { backgroundColor: theme.colors.primary }
+                                    ]}
+                                >
+                                    <Text style={{
+                                        color: selectedMuscle === m ? theme.colors.background : theme.colors.textSecondary,
+                                        fontWeight: 'bold',
+                                        fontSize: 12
+                                    }}>
+                                        {m === 'All' ? t('exercises.all') : m}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+
                     <FlatList
                         data={filteredExercises}
                         keyExtractor={(item: any) => item.id.toString()}
@@ -314,26 +420,149 @@ const EditWorkoutScreen = ({ route, navigation }: any) => {
                         }}
                         keyboardShouldPersistTaps="handled"
                         renderItem={({ item }: { item: any }) => {
+                            const isPending = !!tempSelectedExercises.find(i => i.id === item.id);
                             const alreadyAdded = !!selectedExercises.find(ex => ex.id === item.id);
+
                             return (
-                                <TouchableOpacity
-                                    style={[styles.exListItem, alreadyAdded && styles.exListItemAdded]}
-                                    onPress={() => !alreadyAdded && addExercise(item)}
-                                    disabled={alreadyAdded}
-                                >
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={styles.exListName}>{item.name}</Text>
+                                <View style={[styles.exListItem, (isPending || alreadyAdded) && styles.exListItemAdded]}>
+                                    <TouchableOpacity
+                                        style={{ flex: 1 }}
+                                        onPress={() => setSelectedExerciseDetail(item)}
+                                    >
+                                        <Text style={[styles.exListName, alreadyAdded && { opacity: 0.5 }]}>{item.name}</Text>
                                         <Text style={styles.exListMuscle}>{item.muscle_group}</Text>
-                                    </View>
-                                    {alreadyAdded ? (
-                                        <Check size={18} color={theme.colors.primary} />
-                                    ) : (
-                                        <Plus size={18} color={theme.colors.textSecondary} />
-                                    )}
-                                </TouchableOpacity>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            if (alreadyAdded) return;
+                                            if (isPending) {
+                                                setTempSelectedExercises(tempSelectedExercises.filter(i => i.id !== item.id));
+                                            } else {
+                                                setTempSelectedExercises([...tempSelectedExercises, { ...item, sets: '3', reps: '10', load: '1' }]);
+                                            }
+                                        }}
+                                        style={{ padding: 10 }}
+                                    >
+                                        {alreadyAdded ? (
+                                            <Check size={18} color={theme.colors.textSecondary} />
+                                        ) : isPending ? (
+                                            <View style={styles.checkCircle}>
+                                                <Check size={14} color={theme.colors.background} />
+                                            </View>
+                                        ) : (
+                                            <Plus size={18} color={theme.colors.textSecondary} />
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
                             );
                         }}
                     />
+
+                    {tempSelectedExercises.length > 0 && (
+                        <View style={styles.modalFooter}>
+                            <TouchableOpacity
+                                style={styles.confirmAddBtn}
+                                onPress={() => {
+                                    setSelectedExercises([...selectedExercises, ...tempSelectedExercises]);
+                                    setTempSelectedExercises([]);
+                                    setShowExercisesModal(false);
+                                    setSearch('');
+                                }}
+                            >
+                                <Text style={styles.confirmAddText}>
+                                    {t('common.add')} ({tempSelectedExercises.length})
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </View>
+            </Modal>
+
+            {/* Exercise Detail Modal */}
+            <Modal
+                visible={!!selectedExerciseDetail}
+                animationType="fade"
+                transparent
+                onRequestClose={() => setSelectedExerciseDetail(null)}
+            >
+                <View style={styles.detailModalBackdrop}>
+                    <Animated.View entering={FadeInDown} style={styles.detailModalContent}>
+                        <View style={styles.detailHeader}>
+                            <Text style={styles.detailTitle}>{selectedExerciseDetail?.name}</Text>
+                            <TouchableOpacity onPress={() => setSelectedExerciseDetail(null)}>
+                                <X size={24} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView>
+                            {(selectedExerciseDetail?.gif_urls && selectedExerciseDetail.gif_urls.length > 0) ? (
+                                <View>
+                                    <ScrollView
+                                        horizontal
+                                        pagingEnabled
+                                        showsHorizontalScrollIndicator={false}
+                                        style={styles.detailCarousel}
+                                    >
+                                        {selectedExerciseDetail.gif_urls.map((url: string, index: number) => (
+                                            <Animated.Image
+                                                key={index}
+                                                source={{ uri: fixUrl(url) }}
+                                                style={styles.detailGif}
+                                            />
+                                        ))}
+                                    </ScrollView>
+                                    <View style={styles.paginationDots}>
+                                        {selectedExerciseDetail.gif_urls.map((_: any, i: number) => (
+                                            <View key={i} style={styles.dot} />
+                                        ))}
+                                    </View>
+                                </View>
+                            ) : (
+                                <Animated.Image
+                                    source={{ uri: fixUrl(selectedExerciseDetail?.gif_url) }}
+                                    style={styles.detailGif}
+                                    blurRadius={selectedExerciseDetail?.gif_url ? 0 : 10}
+                                />
+                            )}
+
+                            <View style={styles.detailInfoContainer}>
+                                <View style={styles.detailTag}>
+                                    <Text style={styles.detailTagText}>{selectedExerciseDetail?.muscle_group}</Text>
+                                </View>
+                                <View style={[styles.detailTag, { backgroundColor: theme.colors.surface }]}>
+                                    <Text style={styles.detailTagText}>{selectedExerciseDetail?.equipment}</Text>
+                                </View>
+                            </View>
+
+                            <Text style={styles.detailDescription}>
+                                Este exercício foca no grupo muscular {selectedExerciseDetail?.muscle_group}.
+                                Execute com controle e mantenha a postura adequada durante toda a execução.
+                            </Text>
+                        </ScrollView>
+
+                        <TouchableOpacity
+                            style={[
+                                styles.detailAddBtn,
+                                !!selectedExercises.find(i => i.id === selectedExerciseDetail?.id) && styles.detailAddBtnDisabled
+                            ]}
+                            onPress={() => {
+                                if (!selectedExercises.find(i => i.id === selectedExerciseDetail?.id)) {
+                                    if (!tempSelectedExercises.find(i => i.id === selectedExerciseDetail.id)) {
+                                        setTempSelectedExercises([...tempSelectedExercises, { ...selectedExerciseDetail, sets: '3', reps: '10', load: '0' }]);
+                                    }
+                                }
+                                setSelectedExerciseDetail(null);
+                            }}
+                            disabled={!!selectedExercises.find(i => i.id === selectedExerciseDetail?.id)}
+                        >
+                            <Text style={styles.detailAddBtnText}>
+                                {!!selectedExercises.find(i => i.id === selectedExerciseDetail?.id)
+                                    ? 'Já está no treino'
+                                    : 'Selecionar Exercício'}
+                            </Text>
+                        </TouchableOpacity>
+                    </Animated.View>
                 </View>
             </Modal>
         </KeyboardAvoidingView>
@@ -462,6 +691,15 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: theme.fontSize.sm,
     },
+    sortBtn: {
+        backgroundColor: theme.colors.surface,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: theme.borderRadius.sm,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        justifyContent: 'center',
+    },
 
     // Exercise cards
     exCard: {
@@ -469,10 +707,15 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: theme.colors.surface,
         borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.sm + 2,
+        padding: 12,
         marginBottom: theme.spacing.sm,
         borderWidth: 1,
         borderColor: theme.colors.border,
+    },
+    reorderHandle: {
+        marginRight: 4,
+        gap: 2,
+        alignItems: 'center',
     },
     exInfo: { flex: 1, marginRight: theme.spacing.sm },
     exName: {
@@ -564,6 +807,134 @@ const styles = StyleSheet.create({
         fontSize: theme.fontSize.sm,
         marginTop: 2,
     },
+    filterChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: theme.colors.surface,
+        height: 36,
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: theme.colors.border
+    },
+    checkCircle: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: theme.colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    modalFooter: {
+        padding: 20,
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        backgroundColor: theme.colors.background
+    },
+    confirmAddBtn: {
+        backgroundColor: theme.colors.primary,
+        height: 56,
+        borderRadius: 15,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    confirmAddText: {
+        color: theme.colors.background,
+        fontWeight: 'bold',
+        fontSize: 16
+    },
+
+    // Detail Modal
+    detailModalBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        justifyContent: 'center',
+        padding: 20
+    },
+    detailModalContent: {
+        backgroundColor: theme.colors.background,
+        borderRadius: 30,
+        padding: 20,
+        maxHeight: '80%',
+        borderWidth: 1,
+        borderColor: theme.colors.border
+    },
+    detailHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20
+    },
+    detailTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#fff',
+        flex: 1
+    },
+    detailGif: {
+        width: 320,
+        height: 250,
+        borderRadius: 20,
+        backgroundColor: theme.colors.surface,
+    },
+    detailCarousel: {
+        width: '100%',
+        height: 250,
+        marginBottom: 10
+    },
+    paginationDots: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 6,
+        marginBottom: 20
+    },
+    dot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: theme.colors.primary
+    },
+    detailInfoContainer: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 20
+    },
+    detailTag: {
+        backgroundColor: theme.colors.primary + '20',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: theme.colors.primary + '40'
+    },
+    detailTagText: {
+        color: theme.colors.primary,
+        fontSize: 12,
+        fontWeight: 'bold'
+    },
+    detailDescription: {
+        color: theme.colors.textSecondary,
+        fontSize: 14,
+        lineHeight: 20,
+        marginBottom: 20
+    },
+    detailAddBtn: {
+        backgroundColor: theme.colors.primary,
+        height: 56,
+        borderRadius: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 10
+    },
+    detailAddBtnDisabled: {
+        backgroundColor: theme.colors.surface,
+        opacity: 0.5
+    },
+    detailAddBtnText: {
+        color: theme.colors.background,
+        fontWeight: 'bold',
+        fontSize: 16
+    }
 });
 
 export default EditWorkoutScreen;

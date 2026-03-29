@@ -1,7 +1,17 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ImageBackground } from 'react-native';
 import { theme } from '../theme/theme';
-import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
+import Animated, {
+    FadeInUp,
+    FadeInDown,
+    useSharedValue,
+    useAnimatedStyle,
+    withRepeat,
+    withTiming,
+    withSequence,
+    Easing,
+    Layout
+} from 'react-native-reanimated';
 import { useAuthStore } from '../store/useAuthStore';
 import api from '../api/api';
 import { Mail, Lock, Dumbbell } from 'lucide-react-native';
@@ -17,6 +27,23 @@ const LoginScreen = ({ navigation }: any) => {
     const showAlert = useAlertStore((state) => state.showAlert);
     const setToken = useAuthStore((state) => state.setToken);
     const setUser = useAuthStore((state) => state.setUser);
+
+    const floatAnim = useSharedValue(0);
+
+    React.useEffect(() => {
+        floatAnim.value = withRepeat(
+            withSequence(
+                withTiming(-10, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
+                withTiming(0, { duration: 1500, easing: Easing.inOut(Easing.sin) })
+            ),
+            -1,
+            true
+        );
+    }, []);
+
+    const floatingStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: floatAnim.value }]
+    }));
 
     const handleLogin = async () => {
         if (!email || !password) return showAlert('Erro', t('login.error_fill_fields'));
@@ -45,16 +72,23 @@ const LoginScreen = ({ navigation }: any) => {
                 style={styles.container}
             >
                 <View style={styles.header}>
-                    <Animated.View entering={FadeInUp.duration(1000)}>
+                    <Animated.View
+                        entering={FadeInUp.delay(100).duration(1000)}
+                        style={floatingStyle}
+                    >
                         <View style={styles.logoContainer}>
                             <Dumbbell size={40} color={theme.colors.white} />
                         </View>
                     </Animated.View>
-                    <Text style={styles.title}>{t('app_name')}</Text>
-                    <Text style={styles.subtitle}>{t('app_subtitle')}</Text>
+                    <Animated.Text entering={FadeInUp.delay(300)} style={styles.title}>{t('app_name')}</Animated.Text>
+                    <Animated.Text entering={FadeInUp.delay(450)} style={styles.subtitle}>{t('app_subtitle')}</Animated.Text>
                 </View>
 
-                <Animated.View entering={FadeInDown.delay(600)} style={styles.form}>
+                <Animated.View
+                    entering={FadeInDown.delay(600)}
+                    layout={Layout.springify()}
+                    style={styles.form}
+                >
                     <View style={styles.inputWrapper}>
                         <View style={styles.inputContainer}>
                             <Mail size={20} color={theme.colors.textSecondary} />

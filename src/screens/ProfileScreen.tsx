@@ -11,6 +11,7 @@ import {
     KeyboardAvoidingView,
     Platform
 } from 'react-native';
+import Animated, { FadeInUp, FadeInDown, Layout } from 'react-native-reanimated';
 import { theme } from '../theme/theme';
 import { useAuthStore } from '../store/useAuthStore';
 import api from '../api/api';
@@ -27,14 +28,24 @@ import {
     Weight,
     Ruler,
     ChevronRight,
+    TrendingUp,
+    TrendingDown,
+    Activity,
+    Target,
     Bell,
     Check,
-    Droplets
+    Droplets,
+    Timer,
+    Copy,
+    UserPlus,
 } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage } from '../i18n';
 import { useAlertStore } from '../store/useAlertStore';
 import { NotificationService } from '../services/NotificationService';
+import TimePickerModal from '../components/TimePickerModal';
+// import { SpotifyConnect } from '../components/SpotifyConnect';
 
 const ProfileScreen = ({ navigation }: any) => {
     const { t, i18n } = useTranslation();
@@ -47,10 +58,37 @@ const ProfileScreen = ({ navigation }: any) => {
     const [editData, setEditData] = useState({
         name: user?.name || '',
         weight: user?.weight?.toString() || '',
+        targetWeight: user?.targetWeight?.toString() || '',
         height: user?.height?.toString() || '',
-        gender: user?.gender || ''
+        gender: user?.gender || 'NaoInformar',
+        workoutTime: user?.workoutTime || '08:00'
     });
     const [waterInterval, setWaterInterval] = useState(user?.waterReminderInterval?.toString() || '0');
+    const [workoutTime, setWorkoutTime] = useState(user?.workoutTime || '08:00');
+    const [showMainTimePicker, setShowMainTimePicker] = useState(false);
+    const [showModalTimePicker, setShowModalTimePicker] = useState(false);
+
+    const fetchProfile = async () => {
+        try {
+            const response = await api.get('/auth/me');
+            setUser(response.data);
+        } catch (error) {
+            console.error('Error refreshing profile:', error);
+        }
+    };
+
+    React.useEffect(() => {
+        fetchProfile();
+    }, []);
+
+    React.useEffect(() => {
+        if (user?.waterReminderInterval !== undefined) {
+            setWaterInterval(user.waterReminderInterval.toString());
+        }
+        if (user?.workoutTime) {
+            setWorkoutTime(user.workoutTime);
+        }
+    }, [user?.waterReminderInterval, user?.workoutTime]);
 
     const showAlert = useAlertStore(s => s.showAlert);
 
@@ -87,9 +125,11 @@ const ProfileScreen = ({ navigation }: any) => {
         try {
             const response = await api.put('/auth/me', {
                 name: editData.name,
-                weight: parseFloat(editData.weight),
-                height: parseFloat(editData.height),
-                gender: editData.gender
+                weight: parseFloat(editData.weight.toString().replace(',', '.')),
+                targetWeight: editData.targetWeight ? parseFloat(editData.targetWeight.toString().replace(',', '.')) : undefined,
+                height: parseFloat(editData.height.toString().replace(',', '.')),
+                gender: editData.gender,
+                workoutTime: editData.workoutTime
             });
             setUser(response.data);
             setIsEditModalOpen(false);
@@ -124,9 +164,36 @@ const ProfileScreen = ({ navigation }: any) => {
         }
     };
 
+    const handleSaveWorkoutReminders = async () => {
+        if (workoutTime.length !== 5) return;
+
+        try {
+            const response = await api.put('/auth/me', {
+                workoutTime: workoutTime
+            });
+            setUser(response.data);
+            const workouts = await api.get('/workouts');
+            await NotificationService.scheduleWorkoutReminders(workoutTime, workouts.data);
+            showAlert(t('common.success'), t('profile.workout_reminder_success', 'Horário de treino atualizado!'));
+        } catch {
+            showAlert(t('common.error'), t('profile.update_error'));
+        }
+    };
+
+    const copyToClipboard = async (text: string) => {
+        await Clipboard.setStringAsync(text);
+        showAlert(t('common.success'), 'Código copiado para a área de transferência!');
+    };
+
+    const formatTime = (text: string) => {
+        const raw = text.replace(/[^0-9]/g, '');
+        if (raw.length <= 2) return raw;
+        return `${raw.slice(0, 2)}:${raw.slice(2, 4)}`;
+    };
+
     return (
         <ScrollView style={styles.container}>
-            <View style={styles.header}>
+            <Animated.View entering={FadeInUp.duration(800)} style={styles.header}>
                 <View style={styles.avatar}><User size={50} color="#fff" /></View>
                 <Text style={styles.name}>{user?.name}</Text>
                 <Text style={styles.email}>{user?.email}</Text>
@@ -137,8 +204,10 @@ const ProfileScreen = ({ navigation }: any) => {
                         setEditData({
                             name: user?.name || '',
                             weight: user?.weight?.toString() || '',
+                            targetWeight: user?.targetWeight?.toString() || '',
                             height: user?.height?.toString() || '',
-                            gender: user?.gender || ''
+                            gender: user?.gender || 'NaoInformar',
+                            workoutTime: user?.workoutTime || '08:00'
                         });
                         setIsEditModalOpen(true);
                     }}
@@ -146,9 +215,9 @@ const ProfileScreen = ({ navigation }: any) => {
                     <Edit2 size={16} color={theme.colors.background} />
                     <Text style={styles.editBtnText}>{t('profile.edit_profile')}</Text>
                 </TouchableOpacity>
-            </View>
+            </Animated.View>
 
-            <View style={styles.section}>
+            <Animated.View entering={FadeInDown.delay(200)} layout={Layout.springify()} style={styles.section}>
                 <Text style={styles.label}>{t('profile.info')}</Text>
                 <View style={styles.card}>
                     <View style={styles.item}>
@@ -166,9 +235,15 @@ const ProfileScreen = ({ navigation }: any) => {
                         <Text style={styles.itemText}>{user?.weight}kg / {user?.height}m</Text>
                     </View>
                 </View>
-            </View>
+            </Animated.View>
 
-            <View style={styles.section}>
+            {/* Trainer/Pairing Section 
+            <Animated.View entering={FadeInDown.delay(250)} layout={Layout.springify()} style={styles.section}>
+                ... hidden ...
+            </Animated.View>
+            */}
+
+            <Animated.View entering={FadeInDown.delay(300)} layout={Layout.springify()} style={styles.section}>
                 <Text style={styles.label}>{t('settings.title')}</Text>
                 <View style={styles.card}>
                     <TouchableOpacity style={styles.item} onPress={toggleLanguage}>
@@ -195,9 +270,15 @@ const ProfileScreen = ({ navigation }: any) => {
                         <Text style={styles.itemText}>{t('profile.reset_goal')}</Text>
                     </TouchableOpacity>
                 </View>
-            </View>
+            </Animated.View>
 
-            <View style={styles.section}>
+            {/* Spotify Section 
+            <Animated.View entering={FadeInDown.delay(350)} layout={Layout.springify()} style={styles.section}>
+                ... hidden ...
+            </Animated.View>
+            */}
+
+            <Animated.View entering={FadeInDown.delay(400)} layout={Layout.springify()} style={styles.section}>
                 <Text style={styles.label}>{t('profile.notifications')}</Text>
                 <View style={styles.card}>
                     <TouchableOpacity style={styles.item} onPress={handleTestNotification}>
@@ -226,8 +307,36 @@ const ProfileScreen = ({ navigation }: any) => {
                         </View>
                         <Text style={styles.waterSubhint}>{t('profile.water_reminder_hint')}</Text>
                     </View>
+
+                    <View style={[styles.item, { borderBottomWidth: 0, flexDirection: 'column', alignItems: 'flex-start' }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                            <Timer size={20} color={theme.colors.primary} />
+                            <Text style={[styles.itemText, { fontWeight: 'bold' }]}>Lembrete de Treino</Text>
+                        </View>
+                        <View style={styles.waterIntervalRow}>
+                            <TouchableOpacity
+                                style={styles.waterInput}
+                                onPress={() => setShowMainTimePicker(true)}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={{ color: '#fff', fontWeight: 'bold', textAlign: 'center' }}>{workoutTime}</Text>
+                            </TouchableOpacity>
+
+                            <TimePickerModal
+                                visible={showMainTimePicker}
+                                onClose={() => setShowMainTimePicker(false)}
+                                onSelect={(time) => setWorkoutTime(time)}
+                                initialTime={workoutTime}
+                            />
+                            <Text style={styles.waterHint}>Horário preferencial para treinar</Text>
+                            <TouchableOpacity style={styles.waterSaveBtn} onPress={handleSaveWorkoutReminders}>
+                                <Check size={20} color={theme.colors.background} />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={styles.waterSubhint}>Te avisaremos nos dias de treino marcados em seus planos.</Text>
+                    </View>
                 </View>
-            </View>
+            </Animated.View>
 
             <TouchableOpacity style={styles.logout} onPress={handleLogout}>
                 <LogOut size={20} color={theme.colors.error} />
@@ -293,6 +402,23 @@ const ProfileScreen = ({ navigation }: any) => {
                                 </View>
                             </View>
 
+                            {['weight_loss', 'hypertrophy', 'slimming'].includes(user?.goal || '') && (
+                                <View>
+                                    <Text style={styles.inputLabel}>Peso Objetivo (kg)</Text>
+                                    <View style={styles.inputContainer}>
+                                        <Target size={20} color={theme.colors.textSecondary} />
+                                        <TextInput
+                                            style={styles.input}
+                                            value={editData.targetWeight}
+                                            onChangeText={(v) => setEditData({ ...editData, targetWeight: v })}
+                                            keyboardType="numeric"
+                                            placeholder="Ex: 75"
+                                            placeholderTextColor={theme.colors.textSecondary}
+                                        />
+                                    </View>
+                                </View>
+                            )}
+
                             <Text style={styles.inputLabel}>{t('register.gender')}</Text>
                             <View style={styles.genderSelectGroup}>
                                 {['Masculino', 'Feminino', 'Outros', 'NaoInformar'].map((g) => (
@@ -314,6 +440,23 @@ const ProfileScreen = ({ navigation }: any) => {
                                 ))}
                             </View>
 
+                            <Text style={styles.inputLabel}>Horário de Treino</Text>
+                            <TouchableOpacity
+                                style={styles.inputContainer}
+                                onPress={() => setShowModalTimePicker(true)}
+                                activeOpacity={0.7}
+                            >
+                                <Timer size={20} color={theme.colors.textSecondary} />
+                                <Text style={[styles.input, { paddingVertical: 12 }]}>{editData.workoutTime}</Text>
+                            </TouchableOpacity>
+
+                            <TimePickerModal
+                                visible={showModalTimePicker}
+                                onClose={() => setShowModalTimePicker(false)}
+                                onSelect={(time) => setEditData({ ...editData, workoutTime: time })}
+                                initialTime={editData.workoutTime}
+                            />
+
                             <TouchableOpacity
                                 style={styles.saveBtn}
                                 onPress={handleUpdateProfile}
@@ -331,8 +474,8 @@ const ProfileScreen = ({ navigation }: any) => {
                         </ScrollView>
                     </View>
                 </KeyboardAvoidingView>
-            </Modal>
-        </ScrollView>
+            </Modal >
+        </ScrollView >
     );
 };
 
@@ -371,10 +514,29 @@ const styles = StyleSheet.create({
     selectedGenderOptionText: { color: theme.colors.primary },
 
     waterIntervalRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%', paddingLeft: 10 },
-    waterInput: { backgroundColor: theme.colors.background, color: '#fff', width: 60, height: 40, textAlign: 'center', borderRadius: 8, fontWeight: 'bold', borderWidth: 1, borderColor: theme.colors.border },
+    waterInput: { backgroundColor: theme.colors.background, width: 80, height: 45, justifyContent: 'center', alignItems: 'center', borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, color: '#fff', fontWeight: 'bold', textAlign: 'center', padding: 0 },
     waterHint: { color: theme.colors.textSecondary, fontSize: 13, flex: 1 },
     waterSaveBtn: { backgroundColor: theme.colors.primary, padding: 10, borderRadius: 10 },
-    waterSubhint: { color: theme.colors.textSecondary, fontSize: 11, fontStyle: 'italic', marginTop: 8, marginLeft: 10 }
+    waterSubhint: { color: theme.colors.textSecondary, fontSize: 11, fontStyle: 'italic', marginTop: 8, marginLeft: 10 },
+
+    pairingCodeBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: theme.colors.background,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 12,
+        gap: 10,
+        borderWidth: 1,
+        borderColor: theme.colors.primary + '40'
+    },
+    pairingCodeText: {
+        color: theme.colors.primary,
+        fontWeight: '900',
+        fontSize: 18,
+        letterSpacing: 2,
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace'
+    }
 });
 
 export default ProfileScreen;

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
 
-const BASE_URL = 'https://bcgym-delta.vercel.app/api';
+const BASE_URL = 'https://bcgym-9ipt.vercel.app/api';
 
 const api = axios.create({
     baseURL: BASE_URL,
